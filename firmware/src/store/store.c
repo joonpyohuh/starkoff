@@ -40,9 +40,24 @@ static uint8_t *nvm;    /* base of the mapped memory, NULL if not available */
 static size_t nvm_size;
 static K_MUTEX_DEFINE(store_lock);
 
+/*
+ * The transaction message queue checkpoint (D28) is bigger than one 4 KiB slot, so it has
+ * its own region right after the normal records: two 32 KiB slots at 0x10000 and 0x18000.
+ */
+#define QUEUE_BASE       ((size_t)MAX_RECS * 2 * STORE_SLOT_BYTES) /* = 0x10000 */
+#define QUEUE_SLOT_BYTES (32 * 1024)
+#define NVM_NEEDED       (QUEUE_BASE + 2 * QUEUE_SLOT_BYTES)
+
+static size_t rec_max(int rec_id)
+{
+	return rec_id == STORE_REC_QUEUE ? QUEUE_SLOT_BYTES - sizeof(struct rec_hdr) : STORE_REC_MAX;
+}
+
 static uint8_t *slot_ptr(int rec_id, int slot)
 {
-	if (rec_id==STORE_REC_QUEUE) return nvm + 0x10000 + slot * 32768;
+	if (rec_id == STORE_REC_QUEUE) {
+		return nvm + QUEUE_BASE + (size_t)slot * QUEUE_SLOT_BYTES;
+	}
 	return nvm + (size_t)(rec_id * 2 + slot) * STORE_SLOT_BYTES;
 }
 
@@ -55,7 +70,7 @@ int store_init(void)
 		return -ENODEV;
 	}
 	nvm_size = ivshmem_get_mem(nvm_dev, &base);
-	if (nvm_size < (size_t)MAX_RECS * 2 * STORE_SLOT_BYTES) {
+	if (nvm_size < NVM_NEEDED) {
 		LOG_ERR("NV memory too small (%u bytes): settings will NOT persist",
 			(unsigned)nvm_size);
 		return -ENOSPC;
@@ -77,7 +92,7 @@ static int64_t check_slot(int rec_id, int slot)
 	const uint8_t *p = slot_ptr(rec_id, slot);
 
 	memcpy(&h, p, sizeof(h));
-	if (h.magic != REC_MAGIC || h.len > (rec_id==STORE_REC_QUEUE ? 32768-16 : STORE_REC_MAX)) {
+	if (h.magic != REC_MAGIC || h.len > rec_max(rec_id)) {
 		return -1;
 	}
 	if (crc32_ieee(p + sizeof(h), h.len) != h.crc) {
@@ -135,7 +150,7 @@ int store_save(int rec_id, const void *data, size_t len)
 	if (!nvm || rec_id < 0 || rec_id >= MAX_RECS) {
 		return -ENODEV;
 	}
-	if (len > (rec_id==STORE_REC_QUEUE ? 32768-16 : STORE_REC_MAX)) {
+	if (len > rec_max(rec_id)) {
 		return -EINVAL;
 	}
 	k_mutex_lock(&store_lock, K_FOREVER);

@@ -1,4 +1,16 @@
-/* Local list is authoritative; cache is separate and evicts least recently used entries. */
+/*
+ * Local authorization: Local Authorization List and Authorization Cache (spec 3.5, 5.10, 5.15).
+ *
+ * - The local list comes only from the Central System (SendLocalList) and is checked first;
+ *   it wins over the cache (spec 3.5.3). Tags that are in the list never stay in the cache.
+ * - The cache learns from Authorize.conf / StartTransaction.conf / StopTransaction.conf.
+ *   When full: first replace an empty or no-longer-valid entry, else the one used longest ago.
+ * - SendLocalList is checked on a staged copy and only applied after it was saved to NVM,
+ *   so a failed or partial update never damages the current list.
+ * - If the server answers differently from our local list, connector 0 reports
+ *   LocalListConflict (see connector.c).
+ * Both are persisted (store.c records 3 and 4). Sizes: docs/DECISIONS.md D26.
+ */
 #include "ocpp/auth.h"
 #include "ocpp/clock.h"
 #include "ocpp/config.h"

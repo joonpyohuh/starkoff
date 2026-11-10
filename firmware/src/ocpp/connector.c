@@ -1,11 +1,13 @@
+/* clang-format off */
 /*
  * Charging session state machine, one per connector.
  *
- *   IDLE ──card + Authorize Accepted / RemoteStart──▶ AUTHORIZED ──cable in──▶ CHARGING
- *     ▲            (cable may already be in)            │ ConnectionTimeOut      │ stop: same card,
- *     │                                                 ▼                        │ RemoteStop, EV
- * side └──────────────── cable out ◀────────────── (back to IDLE)                 ▼ disconnect,
- * invalid id └──────────────── cable out ◀──────────────────────────────────────── FINISHING
+ *   IDLE ──card accepted / RemoteStart──▶ AUTHORIZED ──cable in──▶ CHARGING
+ *    ▲     (cable may already be in)        │ ConnectionTimeOut       │ stop: same card or same
+ *    │                                      ▼                         │ parent group, RemoteStop,
+ *    ├──────────────────────────────── back to IDLE                   │ EV side disconnect,
+ *    │                                                                ▼ invalid id, Reset, power
+ *    └──────────────── cable out ◀───────────────────────────────── FINISHING
  *
  * OCPP status (7.7) is derived from the phase + hardware:
  *   Faulted (sensor/lock fault) > Charging/SuspendedEV/SuspendedEVSE > Finishing
@@ -14,8 +16,9 @@
  * Transaction ids: StartTransaction gets a local number (tx_local). Messages that need the
  * real transactionId (MeterValues, StopTransaction) carry the placeholder %TX% and ocpp.c
  * fills in the real id when it sends them; by then StartTransaction.conf has arrived
- * because the queue is strictly in order. (Same mechanism will serve offline transactions.)
+ * because the queue is strictly in order. The same mechanism serves offline transactions.
  */
+/* clang-format on */
 #include "ocpp/connector.h"
 #include "ocpp/auth.h"
 #include "ocpp/clock.h"
@@ -506,8 +509,11 @@ static void send_meter_values(int c, const char *context, int64_t epoch)
 	meter_value(&w, c, context, list, epoch);
 	jw_raw(&w, "]}");
 	if (!w.err) {
-		ocpp_enqueue_ex("MeterValues", jbuf, strcmp(context, "Trigger") != 0, c, NULL,
-				conns[c].tx_local);
+		/* Only values of a running transaction must survive a lost connection
+		 * (spec 3.7); triggered values and idle clock-aligned values do not. */
+		bool tx_related = conns[c].phase == PH_CHARGING && strcmp(context, "Trigger") != 0;
+
+		ocpp_enqueue_ex("MeterValues", jbuf, tx_related, c, NULL, conns[c].tx_local);
 	}
 }
 

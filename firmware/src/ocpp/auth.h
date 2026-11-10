@@ -1,3 +1,4 @@
+/* Local Authorization List and Authorization Cache. See auth.c. */
 #pragma once
 #include "ocpp/json.h"
 #include <stdint.h>
