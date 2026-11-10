@@ -27,7 +27,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
 # Only these control commands may be sent from the browser.
 ALLOWED = ("plug", "unplug", "ev_disconnect", "card", "power", "lock_fail", "fault",
-           "net_down", "net_up", "status", "reboot")
+           "net_down", "net_up", "status", "reboot", "noise", "hang")
 
 
 def ev_json(ev):

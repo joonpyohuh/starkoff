@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <zephyr/kernel.h>
+#include <zephyr/random/random.h>
 #include <zephyr/logging/log.h>
 #include "sim/sim.h"
 
@@ -32,6 +33,27 @@ static bool link_up = true;
 static int64_t last_alive_ms;
 
 static void meter_tick(struct k_work *w);
+static void debounce_tick(struct k_work *w);
+static K_WORK_DELAYABLE_DEFINE(debounce_work, debounce_tick);
+
+/*
+ * Cable detect with debouncing (bonus from docs/DESIGN_resilience.md).
+ * plug/unplug only change the raw signal. Every 10 ms the signal is sampled into an
+ * up/down counter (0..DEB_MAX). The debounced state turns ON at >= DEB_ON and OFF at
+ * <= DEB_OFF (hysteresis). With "noise <c> on" each sample reads the wrong value with
+ * probability 1/4; the gap 16/12/4 makes a false change practically impossible
+ * (12 wrong samples in a row: (1/4)^12 per sample, about once in 5 days at 100 Hz).
+ * Cost: a plug is recognised ~120 ms after the raw change.
+ */
+#define DEB_PERIOD_MS 10
+#define DEB_MAX       16
+#define DEB_ON        12
+#define DEB_OFF       4
+
+static bool raw_cable[SIM_MAX_CONN + 1];
+static bool noise_on[SIM_MAX_CONN + 1];
+static int deb_count[SIM_MAX_CONN + 1];
+static uint32_t glitches[SIM_MAX_CONN + 1];
 static K_WORK_DELAYABLE_DEFINE(meter_work, meter_tick);
 
 static bool valid_conn(int c)
@@ -59,6 +81,7 @@ void sim_init(void)
 		conn[c].temp_c = NOMINAL_TEMP_C;
 	}
 	k_work_schedule(&meter_work, K_SECONDS(1));
+	k_work_schedule(&debounce_work, K_MSEC(DEB_PERIOD_MS));
 }
 
 int sim_evt_get(struct sim_evt *evt, k_timeout_t timeout)
@@ -74,15 +97,18 @@ int sim_plug(int c)
 		return -EINVAL;
 	}
 	k_mutex_lock(&sim_lock_mtx, K_FOREVER);
-	bool was = conn[c].cable_cs && conn[c].cable_ev;
+	/* Cable already detected in the socket, only the car side was out: re-plug at once. */
+	bool replug_ev = conn[c].cable_cs && !conn[c].cable_ev;
 
-	conn[c].cable_cs = true;
-	conn[c].cable_ev = true;
+	raw_cable[c] = true;
+	if (replug_ev) {
+		conn[c].cable_ev = true;
+	}
 	k_mutex_unlock(&sim_lock_mtx);
-	if (!was) {
+	if (replug_ev) {
 		post(SIM_EVT_PLUG, c, NULL);
 	}
-	return 0;
+	return 0; /* otherwise the debouncer reports the plug ~120 ms later */
 }
 
 int sim_unplug(int c)
@@ -96,14 +122,8 @@ int sim_unplug(int c)
 		k_mutex_unlock(&sim_lock_mtx);
 		return -EBUSY;
 	}
-	bool was = conn[c].cable_cs;
-
-	conn[c].cable_cs = false;
-	conn[c].cable_ev = false;
+	raw_cable[c] = false; /* the debouncer reports the unplug ~120 ms later */
 	k_mutex_unlock(&sim_lock_mtx);
-	if (was) {
-		post(SIM_EVT_UNPLUG, c, NULL);
-	}
 	return 0;
 }
 
@@ -336,9 +356,10 @@ size_t sim_status(char *buf, size_t len)
 
 		n += snprintf(buf + n, len - n,
 			      " c%d.cable=%d c%d.ev=%d c%d.locked=%d c%d.relay=%d c%d.wh=%u"
-			      " c%d.power_w=%d c%d.fault=%s",
+			      " c%d.power_w=%d c%d.noise=%s c%d.glitches=%u c%d.fault=%s",
 			      c, s->cable_cs, c, s->cable_ev, c, s->locked, c, s->relay,
 			      c, (unsigned)(s->energy_mwh / 1000), c, s->power_w,
+			      c, noise_on[c] ? "on" : "off", c, (unsigned)glitches[c],
 			      c, *s->fault ? s->fault : "none");
 	}
 	k_mutex_unlock(&sim_lock_mtx);
@@ -350,5 +371,61 @@ void sim_restore(int c, const struct sim_conn_state *state)
  if(!valid_conn(c)) return;
  k_mutex_lock(&sim_lock_mtx,K_FOREVER);
  conn[c]=*state; conn[c].relay=false; conn[c].power_w=0;
+ raw_cable[c] = state->cable_cs;                 /* debouncer starts settled */
+ deb_count[c] = state->cable_cs ? DEB_MAX : 0;
  k_mutex_unlock(&sim_lock_mtx);
+}
+
+static volatile bool hung;
+
+void sim_hang(void)
+{
+	hung = true;
+}
+
+bool sim_hung(void)
+{
+	return hung;
+}
+
+int sim_noise(int c, bool on)
+{
+	if (!valid_conn(c)) {
+		return -EINVAL;
+	}
+	noise_on[c] = on;
+	return 0;
+}
+
+static void debounce_tick(struct k_work *w)
+{
+	ARG_UNUSED(w);
+
+	for (int c = 1; c <= SIM_MAX_CONN; c++) {
+		uint8_t evt = 0xff;
+
+		k_mutex_lock(&sim_lock_mtx, K_FOREVER);
+		bool sample = raw_cable[c];
+
+		if (noise_on[c] && (sys_rand32_get() & 3) == 0) {
+			sample = !sample; /* electrical noise: one wrong reading */
+			glitches[c]++;
+		}
+		deb_count[c] += sample ? 1 : -1;
+		deb_count[c] = CLAMP(deb_count[c], 0, DEB_MAX);
+		if (!conn[c].cable_cs && deb_count[c] >= DEB_ON) {
+			conn[c].cable_cs = true;
+			conn[c].cable_ev = true;
+			evt = SIM_EVT_PLUG;
+		} else if (conn[c].cable_cs && deb_count[c] <= DEB_OFF) {
+			conn[c].cable_cs = false;
+			conn[c].cable_ev = false;
+			evt = SIM_EVT_UNPLUG;
+		}
+		k_mutex_unlock(&sim_lock_mtx);
+		if (evt != 0xff) {
+			post(evt, c, NULL);
+		}
+	}
+	k_work_schedule(&debounce_work, K_MSEC(DEB_PERIOD_MS));
 }

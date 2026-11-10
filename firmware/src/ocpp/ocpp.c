@@ -32,6 +32,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/random/random.h>
 #include <zephyr/sys/reboot.h>
+#include <zephyr/task_wdt/task_wdt.h>
 
 LOG_MODULE_REGISTER(ocpp, LOG_LEVEL_INF);
 
@@ -1024,9 +1025,26 @@ static size_t status_hook(char *buf, size_t len)
 	return MIN(n, len);
 }
 
+/*
+ * Software watchdog (docs/DESIGN_resilience.md 3-2). The main loop feeds it every pass.
+ * If the loop is stuck for WDT_TIMEOUT_MS the charger reboots by itself.
+ * 30 s: the longest legitimate block is a connection attempt (10 s TCP + 5 s handshake).
+ */
+#define WDT_TIMEOUT_MS 30000
+
+static void wdt_expired(int channel_id, void *user_data)
+{
+	ARG_UNUSED(channel_id);
+	ARG_UNUSED(user_data);
+	/* timer context: printk is synchronous, the deferred log would be lost by the reboot */
+	printk("\n*** watchdog: main loop stuck for %d s, rebooting ***\n", WDT_TIMEOUT_MS / 1000);
+	sys_reboot(SYS_REBOOT_COLD);
+}
+
 void ocpp_run(void)
 {
 	struct sim_evt e;
+	int wdt = -1;
 
 	msg_prefix = sys_rand32_get();
 	conn_init();
@@ -1036,9 +1054,22 @@ void ocpp_run(void)
 	LOG_INF("OCPP 1.6J charge point %s, server %s", cfg_get(CFG_CP_ID),
 		cfg_get(CFG_SERVER_URL));
 
+	if (task_wdt_init(NULL) == 0) {
+		wdt = task_wdt_add(WDT_TIMEOUT_MS, wdt_expired, NULL);
+	}
+	if (wdt < 0) {
+		LOG_ERR("software watchdog not available");
+	}
+
 	while (1) {
 		int n;
 
+		while (sim_hung()) {
+			k_msleep(100); /* simulated CPU stall: no alive signal, no watchdog feed */
+		}
+		if (wdt >= 0) {
+			task_wdt_feed(wdt);
+		}
 		if (!dead) {
 			sim_alive_kick();
 		}

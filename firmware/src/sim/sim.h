@@ -86,5 +86,12 @@ bool sim_led_green(void);
 /* Append "key=value" status of the hardware to buf. */
 size_t sim_status(char *buf, size_t len);
 
+/* Simulated CPU stall (control command "hang"): the charger main loop stops working,
+ * so the status LED goes dark and the software watchdog must reboot the charger. */
+void sim_hang(void);
+/* Electrical noise on the cable-detect signal (debouncing demo). */
+int sim_noise(int c, bool on);
+bool sim_hung(void);
+
 /* Restore the outside world after a simulated controller reboot. */
 void sim_restore(int c, const struct sim_conn_state *state);

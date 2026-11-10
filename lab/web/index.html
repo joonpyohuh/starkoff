@@ -74,6 +74,9 @@
         <button data-cmd="fault 1 off">고장 해제</button>
         <button data-cmd="lock_fail 1 on" class="warn">잠금 고장</button>
         <button data-cmd="lock_fail 1 off">잠금 정상</button>
+        <button data-cmd="noise 1 on" class="warn" title="케이블 감지 신호에 순간 튀는 값을 섞습니다. 디바운싱 덕분에 상태가 흔들리지 않아야 합니다.">신호 노이즈 켜기</button>
+        <button data-cmd="noise 1 off">신호 노이즈 끄기</button>
+        <button data-cmd="hang" class="warn" title="충전기 CPU가 멈춘 상황. 상태등이 꺼지고 30초 뒤 워치독이 재부팅해야 합니다.">CPU 멈춤</button>
       </div>
       <div class="toast" id="toast" role="status"></div>
     </div>

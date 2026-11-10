@@ -88,6 +88,7 @@ function renderScene() {
     if (st["c1.tag"] && st["c1.tag"] !== "-") parts.push(`카드 ${st["c1.tag"]}`);
     if (st["c1.tx"] && st["c1.tx"] !== "-1") parts.push(`거래 #${st["c1.tx"]}`);
     if (st["c1.fault"] && st["c1.fault"] !== "none") parts.push(st["c1.fault"]);
+    if (st["c1.noise"] === "on") parts.push(`노이즈 걸러냄 ${st["c1.glitches"] || 0}회`);
     if (st.ws !== "up") parts.push("서버 연결 끊김");
     $("s-sub").textContent = parts.join(" · ") || " ";
   }

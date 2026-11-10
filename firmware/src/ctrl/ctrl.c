@@ -156,6 +156,13 @@ void ctrl_exec(char *line, char *out, size_t len)
 		}
 	} else if (strcmp(cmd, "fault") == 0) {
 		rc = argc > 2 ? sim_fault(c, argv[2]) : -EINVAL;
+	} else if (strcmp(cmd, "noise") == 0) {
+		rc = on_off(argc > 2 ? argv[2] : NULL, &b);
+		if (rc == 0) {
+			rc = sim_noise(c, b);
+		}
+	} else if (strcmp(cmd, "hang") == 0) {
+		sim_hang(); /* main loop stalls; watchdog reboots after WDT_TIMEOUT */
 	} else if (strcmp(cmd, "net_down") == 0) {
 		rc = sim_link(false);
 	} else if (strcmp(cmd, "net_up") == 0) {
@@ -330,7 +337,7 @@ static int cmd_cp(const struct shell *sh, size_t argc, char **argv)
 
 SHELL_CMD_ARG_REGISTER(cp, NULL,
 	"Charge point control: status | plug <c> | unplug <c> | ev_disconnect <c> | "
-	"card <c> <idTag> | power on|off | lock_fail <c> on|off | "
+	"card <c> <idTag> | power on|off | lock_fail <c> on|off | noise <c> on|off | hang | "
 	"fault <c> overcurrent|overtemp|overvoltage|off | net_down | net_up | "
 	"cfg get|set|list|reset | reboot",
 	cmd_cp, 2, 6);

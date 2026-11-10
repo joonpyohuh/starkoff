@@ -2,6 +2,18 @@
 
 실제 QEMU 펌웨어를 실행한 결과만 PASS로 기록합니다. 공식 OCTT 인증 결과가 아닙니다.
 
+## 2026-11-10 22시 · 재검증 (Claude Code) — **최신 기준**
+
+- 아래 "3·4단계" 기록(Codex 세션)의 코드를 커밋 `4ee8375`로 묶은 뒤, 처음부터 다시 빌드(경고 0)하고
+  `scripts/run_lab.sh --qemu --all --markdown`으로 68개 전체를 다시 실행했습니다.
+- 결과: **67/68 PASS, 1 FAIL, 펌웨어 크래시 0건.**
+- **TC_047_CS (예약 만료) FAIL**: "Step 5: 만료 뒤 8초 안에 StatusNotification(Available)을 기대했지만 아무것도
+  오지 않음". 아래 기록에는 PASS로 적혀 있지만 재현되지 않았습니다. 원인은 아직 찾지 못했습니다.
+  **지금은 "안 됨"으로 봅니다.**
+- 재검증 뒤 추가한 기능은 **빌드만 확인했고 시험은 아직 실행하지 않았습니다** (검증 안 됨):
+  StopTransaction의 transactionData, 소프트웨어 워치독(`hang` 명령), 케이블 신호 디바운싱(`noise` 명령).
+  디바운싱 때문에 케이블을 꽂고 뽑은 것이 약 120 ms 뒤에 반영되므로, 기존 시험도 다시 돌려 확인해야 합니다.
+
 ## 2026-11-10 · 3·4단계와 웹 UI 구현
 
 - 기준: `docs/reference/assignment.md`, OCPP 1.6 Edition 2 전체 추출 텍스트,
@@ -59,7 +71,7 @@
 | TC_049_CS | Reservation transaction - connector 0, remote=True, parent=False | PASS |  (6 s) |
 | TC_053_1_CS | Reservation transaction - connector 1, remote=False, parent=True | PASS |  (7 s) |
 | TC_053_2_CS | Reservation transaction - connector 1, remote=True, parent=True | PASS |  (10 s) |
-| TC_047_CS | Reservation expiry releases connector | PASS |  (8 s) |
+| TC_047_CS | Reservation expiry releases connector | PASS → **재검증 FAIL** | 위 재검증 참고 (8 s) |
 | TC_048_1_CS | Reserve connector 1 - Faulted | PASS |  (2 s) |
 | TC_048_2_CS | Reserve connector 1 - Occupied | PASS |  (2 s) |
 | TC_048_3_CS | Reserve connector 1 - Unavailable | PASS |  (2 s) |
@@ -125,10 +137,11 @@ Playwright가 설치된 별도 Python 환경에서 `python lab/web/check_ui.py`�
 ## 미구현 또는 별도 검증이 필요한 범위
 
 - FirmwareManagement, SmartCharging, 보안 확장(TLS·인증서·보안 로그)은 미지원입니다.
-- StopTxnSampledData/StopTxnAlignedData에 따른 StopTransaction.transactionData 상세 집계는 미구현입니다.
+- StopTransaction.transactionData: 구현함, **검증 안 됨**. 시작 · 최근 6개 주기 샘플 · 종료 값을 1 KB 안에
+  들어가는 만큼만 담습니다. RAM에만 있어서 재부팅을 넘긴 거래는 비어 있습니다.
 - 출력 큐 16개(종료용 2칸 확보), 로컬 목록 32개, 한 번의 목록 전송 16개, 캐시 32개입니다.
   용량 경계의 장시간 스트레스·임의 QEMU 강제 종료·호스트 디스크 장애는 검증하지 않았습니다.
-- 소프트웨어 워치독과 노이즈 디바운싱 보너스는 미구현입니다.
+- 소프트웨어 워치독(30초)과 케이블 신호 디바운싱: 구현함, **검증 안 됨**.
 - 깨끗한 새 Ubuntu 22.04에서 README만으로 처음부터 설치하는 절차는 아직 검증하지 않았습니다.
 - 공식 OCTT·스타코프 시험 서버에서는 아직 실행하지 않았습니다.
 - 캐시 LRU 모든 경계, 모든 설정 조합 및 모든 메시지 스키마 오류 입력을 망라한 시험은 아닙니다.

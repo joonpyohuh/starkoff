@@ -297,16 +297,33 @@ static void send_authorize(int c, const char *tag)
 		conns[c].authorizing = false;
 }
 
-/* One MeterValue element with every configured measurand. */
-static void meter_value(struct jw *w, int c, const char *context, const char *keylist,
-			int64_t epoch)
+/* Meter readings of one moment (live from the simulator, or stored for transactionData). */
+struct reading {
+	int64_t epoch;
+	uint32_t wh;
+	int power_w, current_a, voltage_v;
+};
+
+static void read_now(int c, struct reading *r)
 {
 	struct sim_conn_state hw;
+
+	sim_get(c, &hw);
+	r->epoch = clock_now();
+	r->wh = (uint32_t)(hw.energy_mwh / 1000);
+	r->power_w = hw.power_w;
+	r->current_a = hw.current_a;
+	r->voltage_v = hw.voltage_v;
+}
+
+/* One MeterValue element: every measurand of keylist, values from r. */
+static void write_meter_value(struct jw *w, const struct reading *r, const char *context,
+			      const char *keylist)
+{
 	char ts[CLOCK_ISO_LEN], list[CFG_VAL_MAX], *save, *m;
 	bool first_sv = true;
 
-	sim_get(c, &hw);
-	clock_format_iso(epoch, ts, sizeof(ts));
+	clock_format_iso(r->epoch, ts, sizeof(ts));
 	strncpy(list, keylist, sizeof(list) - 1);
 	list[sizeof(list) - 1] = '\0';
 	jw_printf(w, "{\"timestamp\":\"%s\",\"sampledValue\":[", ts);
@@ -318,16 +335,16 @@ static void meter_value(struct jw *w, int c, const char *context, const char *ke
 			m++;
 		}
 		if (strcmp(m, "Energy.Active.Import.Register") == 0) {
-			snprintf(val, sizeof(val), "%u", (unsigned)(hw.energy_mwh / 1000));
+			snprintf(val, sizeof(val), "%u", (unsigned)r->wh);
 			unit = "Wh";
 		} else if (strcmp(m, "Power.Active.Import") == 0) {
-			snprintf(val, sizeof(val), "%d", hw.power_w);
+			snprintf(val, sizeof(val), "%d", r->power_w);
 			unit = "W";
 		} else if (strcmp(m, "Current.Import") == 0) {
-			snprintf(val, sizeof(val), "%d", hw.current_a);
+			snprintf(val, sizeof(val), "%d", r->current_a);
 			unit = "A";
 		} else if (strcmp(m, "Voltage") == 0) {
-			snprintf(val, sizeof(val), "%d", hw.voltage_v);
+			snprintf(val, sizeof(val), "%d", r->voltage_v);
 			unit = "V";
 		} else {
 			continue;
@@ -339,6 +356,128 @@ static void meter_value(struct jw *w, int c, const char *context, const char *ke
 		first_sv = false;
 	}
 	jw_raw(w, "]}");
+}
+
+static void meter_value(struct jw *w, int c, const char *context, const char *keylist,
+			int64_t epoch)
+{
+	struct reading r;
+
+	read_now(c, &r);
+	r.epoch = epoch;
+	write_meter_value(w, &r, context, keylist);
+}
+
+/*
+ * transactionData of StopTransaction (spec 3.16.1 / 3.16.2, keys StopTxnSampledData and
+ * StopTxnAlignedData). Per connector: the Transaction.Begin reading plus a small ring of
+ * the latest periodic / clock-aligned readings; Transaction.End is read at stop.
+ * Kept in RAM only (not in the NVM checkpoint): after a reboot the list starts empty.
+ */
+enum { SK_BEGIN, SK_PERIODIC, SK_CLOCK, SK_END };
+static const char *const sk_context[] = {
+	"Transaction.Begin", "Sample.Periodic", "Sample.Clock", "Transaction.End",
+};
+#define TXDATA_RING 6
+
+struct txsample {
+	uint8_t kind;
+	struct reading r;
+};
+
+static struct {
+	bool has_begin;
+	struct txsample begin;
+	struct txsample ring[TXDATA_RING];
+	int head, count;
+} txdata[CONN_MAX + 1];
+
+/* Measurands for a sample kind; "" = this kind is not wanted in transactionData. */
+static const char *txdata_keys(int kind)
+{
+	const char *sampled = cfg_get("StopTxnSampledData");
+	const char *aligned = cfg_get("StopTxnAlignedData");
+
+	sampled = sampled ? sampled : "";
+	aligned = aligned ? aligned : "";
+	if (kind == SK_PERIODIC) {
+		return sampled;
+	}
+	if (kind == SK_CLOCK) {
+		return aligned;
+	}
+	return *sampled ? sampled : aligned; /* begin/end: whichever list is configured */
+}
+
+static void txdata_record(int c, int kind)
+{
+	struct txsample smp = { .kind = (uint8_t)kind };
+
+	if (!*txdata_keys(kind)) {
+		return;
+	}
+	read_now(c, &smp.r);
+	if (kind == SK_BEGIN) {
+		memset(&txdata[c], 0, sizeof(txdata[c]));
+		txdata[c].begin = smp;
+		txdata[c].has_begin = true;
+		return;
+	}
+	txdata[c].ring[(txdata[c].head + txdata[c].count) % TXDATA_RING] = smp;
+	if (txdata[c].count < TXDATA_RING) {
+		txdata[c].count++;
+	} else {
+		txdata[c].head = (txdata[c].head + 1) % TXDATA_RING; /* drop the oldest */
+	}
+}
+
+/* Append one sample to w only if it fits (keeping `reserve` bytes free). */
+static bool txdata_append(struct jw *w, const struct txsample *smp, bool first, size_t reserve)
+{
+	static char tmp[512];
+	struct jw t;
+
+	jw_init(&t, tmp, sizeof(tmp));
+	if (!first) {
+		jw_raw(&t, ",");
+	}
+	write_meter_value(&t, &smp->r, sk_context[smp->kind], txdata_keys(smp->kind));
+	if (t.err || w->pos + t.pos + reserve >= w->len) {
+		return false;
+	}
+	jw_raw(w, tmp);
+	return true;
+}
+
+/* ",\"transactionData\":[...]" with Begin, the ring (oldest first) and End. */
+static void txdata_write(struct jw *w, int c)
+{
+	struct txsample end = { .kind = SK_END };
+	bool first = true, any = txdata[c].has_begin || txdata[c].count || *txdata_keys(SK_END);
+	const size_t reserve = 4; /* "]}" + NUL */
+
+	if (!any) {
+		return;
+	}
+	jw_raw(w, ",\"transactionData\":[");
+	if (txdata[c].has_begin && txdata_append(w, &txdata[c].begin, first, reserve)) {
+		first = false;
+	}
+	for (int i = 0; i < txdata[c].count; i++) {
+		const struct txsample *smp = &txdata[c].ring[(txdata[c].head + i) % TXDATA_RING];
+
+		if (txdata_append(w, smp, first, reserve)) {
+			first = false;
+		}
+	}
+	if (*txdata_keys(SK_END)) {
+		read_now(c, &end.r);
+		if (txdata_append(w, &end, first, reserve)) {
+			first = false;
+		}
+	}
+	jw_raw(w, "]");
+	memset(&txdata[c], 0, sizeof(txdata[c]));
 }
 
 static void send_meter_values(int c, const char *context, int64_t epoch)
@@ -413,6 +552,7 @@ static void start_transaction(int c, const char *tag)
 		k->phase = PH_IDLE;
 		return;
 	}
+	txdata_record(c, SK_BEGIN);
 	LOG_INF("connector %d: transaction #%d started for %s", c, k->tx_local, tag);
 }
 
@@ -434,8 +574,21 @@ static void stop_transaction(int c, const char *reason, const char *tag)
 		jw_raw(&w, ",\"idTag\":");
 		jw_str(&w, tag);
 	}
-	jw_printf(&w, ",\"meterStop\":%u,\"timestamp\":\"%s\",\"reason\":\"%s\"}", sim_meter_wh(c),
+	jw_printf(&w, ",\"meterStop\":%u,\"timestamp\":\"%s\",\"reason\":\"%s\"", sim_meter_wh(c),
 		  ts, reason);
+	txdata_write(&w, c); /* only samples that fit; never a cut message */
+	jw_raw(&w, "}");
+	if (w.err) {
+		LOG_ERR("connector %d: StopTransaction does not fit, sent without transactionData", c);
+		jw_init(&w, jbuf, sizeof(jbuf));
+		jw_raw(&w, "{\"transactionId\":%TX%");
+		if (tag) {
+			jw_raw(&w, ",\"idTag\":");
+			jw_str(&w, tag);
+		}
+		jw_printf(&w, ",\"meterStop\":%u,\"timestamp\":\"%s\",\"reason\":\"%s\"}",
+			  sim_meter_wh(c), ts, reason);
+	}
 	ocpp_enqueue_ex("StopTransaction", jbuf, true, c, tag, k->tx_local);
 	LOG_INF("connector %d: transaction #%d stopped (%s)", c, k->tx_local, reason);
 
@@ -788,7 +941,12 @@ void conn_tick(void)
 			aligned_next = next_aligned_time(epoch, ai);
 		if (epoch >= aligned_next) {
 			for (int c = 1; c <= CONN_MAX; c++)
+			{
 				send_meter_values(c, "Sample.Clock", aligned_next);
+				if (conns[c].phase == PH_CHARGING) {
+					txdata_record(c, SK_CLOCK);
+				}
+			}
 			aligned_next = next_aligned_time(epoch, ai);
 		}
 	}
@@ -811,6 +969,7 @@ void conn_tick(void)
 			int interval = cfg_get_int("MeterValueSampleInterval", 0);
 
 			send_meter_values(c, "Sample.Periodic", clock_now());
+			txdata_record(c, SK_PERIODIC);
 			k->next_sample_at =
 			    interval > 0 ? k->next_sample_at + (int64_t)interval * 1000 : INT64_MAX;
 		}

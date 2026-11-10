@@ -130,6 +130,8 @@ UART 쉘(앞에 `cp ` 붙임)과 TCP 7000 포트(한 줄 보내면 한 줄 응�
 | `card <c> <idTag>` | RFID 카드 대기 |
 | `power off` / `power on` | 전원 차단 / 복구 (복구 시 재부팅) |
 | `lock_fail <c> on\|off` | 커넥터 잠금 모터 고장 |
+| `noise <c> on\|off` | 케이블 감지 신호에 순간 튀는 값 섞기 (디바운싱 시연, 걸러낸 횟수는 `cN.glitches`) |
+| `hang` | CPU 멈춤 흉내: 상태등이 꺼지고 30초 뒤 소프트웨어 워치독이 재부팅 |
 | `fault <c> overcurrent\|overtemp\|overvoltage\|off` | 센서 값을 정상 범위 밖으로 (1초 안에 고장으로 감지) |
 | `net_down` / `net_up` | 네트워크 선 뽑기 / 다시 꽂기 |
 | `cfg get <k>` / `cfg set <k> <v>` / `cfg list` / `cfg reset` | 설정 키 |
@@ -177,8 +179,10 @@ nc 127.0.0.1 7000                              # 대화형: 명령을 치면 응
   종료 메시지용 2칸을 남기며, 장기 오프라인에서는 미터값 일부가 거절될 수 있습니다.
 - 체크포인트는 메인 루프마다 변경된 경우 기록합니다. QEMU 강제 종료 순간과 호스트 디스크 장애까지
   완전한 무손실을 보장하지 않습니다. 시뮬레이션 `power off/on`과 프로토콜 Reset을 시험합니다.
-- StopTxnSampledData/StopTxnAlignedData에 따른 종료 메시지의 상세 transactionData 집계는 미구현입니다.
-- 소프트웨어 워치독, 케이블 신호 노이즈·디바운싱 보너스는 미구현입니다.
+- 종료 메시지의 transactionData(StopTxnSampledData/AlignedData), 소프트웨어 워치독, 케이블 신호 디바운싱은
+  **구현했지만 아직 시험하지 않았습니다.** transactionData는 RAM에만 있어 재부팅을 넘긴 거래에서는 비어 있습니다.
+  디바운싱 때문에 케이블 꽂기 · 뽑기가 약 120 ms 늦게 반영됩니다.
+- **TC_047(예약 만료)은 재검증에서 실패했습니다.** docs/TEST_RESULTS.md 참고.
 - **비휘발 메모리는 호스트 파일입니다.** QEMU의 `ivshmem` 장치로 1 MiB 파일을 펌웨어 메모리에
   연결합니다 (`qemu_x86`에는 꺼져도 남는 flash가 없음). 실제 충전기라면 flash/FRAM이고, 바뀌는 곳은
   `firmware/src/store/store.c` 하나입니다. DECISIONS D9.
