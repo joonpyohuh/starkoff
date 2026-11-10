@@ -42,6 +42,7 @@ static K_MUTEX_DEFINE(store_lock);
 
 static uint8_t *slot_ptr(int rec_id, int slot)
 {
+	if (rec_id==STORE_REC_QUEUE) return nvm + 0x10000 + slot * 32768;
 	return nvm + (size_t)(rec_id * 2 + slot) * STORE_SLOT_BYTES;
 }
 
@@ -76,7 +77,7 @@ static int64_t check_slot(int rec_id, int slot)
 	const uint8_t *p = slot_ptr(rec_id, slot);
 
 	memcpy(&h, p, sizeof(h));
-	if (h.magic != REC_MAGIC || h.len > STORE_REC_MAX) {
+	if (h.magic != REC_MAGIC || h.len > (rec_id==STORE_REC_QUEUE ? 32768-16 : STORE_REC_MAX)) {
 		return -1;
 	}
 	if (crc32_ieee(p + sizeof(h), h.len) != h.crc) {
@@ -108,7 +109,7 @@ int store_load(int rec_id, void *out, size_t max_len)
 	struct rec_hdr h;
 	int slot, len;
 
-	if (!nvm || rec_id >= MAX_RECS) {
+	if (!nvm || rec_id < 0 || rec_id >= MAX_RECS) {
 		return -ENODEV;
 	}
 	k_mutex_lock(&store_lock, K_FOREVER);
@@ -131,10 +132,10 @@ int store_save(int rec_id, const void *data, size_t len)
 	uint8_t *p;
 	int slot;
 
-	if (!nvm || rec_id >= MAX_RECS) {
+	if (!nvm || rec_id < 0 || rec_id >= MAX_RECS) {
 		return -ENODEV;
 	}
-	if (len > STORE_REC_MAX) {
+	if (len > (rec_id==STORE_REC_QUEUE ? 32768-16 : STORE_REC_MAX)) {
 		return -EINVAL;
 	}
 	k_mutex_lock(&store_lock, K_FOREVER);
@@ -158,7 +159,7 @@ int store_save(int rec_id, const void *data, size_t len)
 
 int store_erase(int rec_id)
 {
-	if (!nvm || rec_id >= MAX_RECS) {
+	if (!nvm || rec_id < 0 || rec_id >= MAX_RECS) {
 		return -ENODEV;
 	}
 	k_mutex_lock(&store_lock, K_FOREVER);

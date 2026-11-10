@@ -11,7 +11,7 @@
 #define JSMN_STRICT
 #include "jsmn.h"
 
-#define JP_MAX_TOKENS 160
+#define JP_MAX_TOKENS 512
 
 struct jp {
 	const char *js;

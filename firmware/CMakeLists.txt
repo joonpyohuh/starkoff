@@ -4,5 +4,5 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(starkoff_ocpp_cp)
 
 target_include_directories(app PRIVATE src lib/jsmn)
-FILE(GLOB app_sources src/*.c src/*/*.c)
+file(GLOB app_sources CONFIGURE_DEPENDS src/*.c src/*/*.c)
 target_sources(app PRIVATE ${app_sources})

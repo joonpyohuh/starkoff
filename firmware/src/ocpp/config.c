@@ -36,7 +36,7 @@ static struct cfg_item items[] = {
 	{ "AuthorizeRemoteTxRequests",         CFG_BOOL, 0,           "true" },
 	{ "BackupPower",                       CFG_BOOL, 0,           "false" }, /* vendor key, see docs/DESIGN_resilience.md */
 	{ "ClockAlignedDataInterval",          CFG_INT,  0,           "0" },
-	{ "ConnectionTimeOut",                 CFG_INT,  0,           "60" },
+	{ "ConnectionTimeOut",                 CFG_INT,  0,           "30" },
 	{ "ConnectorPhaseRotation",            CFG_CSL,  0,           "0.NotApplicable" },
 	{ "GetConfigurationMaxKeys",           CFG_INT,  CFG_RO,      "50" },
 	{ "HeartbeatInterval",                 CFG_INT,  0,           "300" },
@@ -52,10 +52,20 @@ static struct cfg_item items[] = {
 	{ "StopTransactionOnInvalidId",        CFG_BOOL, 0,           "true" },
 	{ "StopTxnAlignedData",                CFG_CSL,  0,           "" },
 	{ "StopTxnSampledData",                CFG_CSL,  0,           "" },
-	{ "SupportedFeatureProfiles",          CFG_CSL,  CFG_RO,      "Core" },
+	{ "SupportedFeatureProfiles",          CFG_CSL,  CFG_RO,      "Core,LocalAuthListManagement,Reservation,RemoteTrigger" },
 	{ "TransactionMessageAttempts",        CFG_INT,  0,           "3" },
 	{ "TransactionMessageRetryInterval",   CFG_INT,  0,           "60" },
 	{ "UnlockConnectorOnEVSideDisconnect", CFG_BOOL, 0,           "true" },
+	{ "LocalAuthListEnabled", CFG_BOOL, 0, "true" },
+	{ "LocalAuthListMaxLength", CFG_INT, CFG_RO, "32" },
+	{ "SendLocalListMaxLength", CFG_INT, CFG_RO, "16" },
+	{ "ReserveConnectorZeroSupported", CFG_BOOL, CFG_RO, "true" },
+	{ "_StoreFail", CFG_BOOL, CFG_HIDDEN, "false" },
+ { "MeterValuesAlignedDataMaxLength", CFG_INT, CFG_RO, "4" },
+ { "MeterValuesSampledDataMaxLength", CFG_INT, CFG_RO, "4" },
+ { "StopTxnAlignedDataMaxLength", CFG_INT, CFG_RO, "4" },
+ { "StopTxnSampledDataMaxLength", CFG_INT, CFG_RO, "4" },
+ { "SupportedFeatureProfilesMaxLength", CFG_INT, CFG_RO, "4" },
 	/* internal */
 	{ CFG_SERVER_URL,                      CFG_STR,  CFG_HIDDEN,  CONFIG_OCPP_SERVER_URL },
 	{ CFG_CP_ID,                           CFG_STR,  CFG_HIDDEN,  CONFIG_OCPP_CHARGE_POINT_ID },
@@ -208,7 +218,7 @@ enum cfg_set_result cfg_set(const char *key, const char *value, bool from_ocpp)
 		}
 		break;
 	case CFG_INT:
-		if (!valid_int(norm)) {
+		if (!valid_int(norm) || strtoul(norm,NULL,10)>86400) {
 			return CFG_REJECTED;
 		}
 		break;

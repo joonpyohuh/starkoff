@@ -85,3 +85,6 @@ bool sim_led_green(void);
 
 /* Append "key=value" status of the hardware to buf. */
 size_t sim_status(char *buf, size_t len);
+
+/* Restore the outside world after a simulated controller reboot. */
+void sim_restore(int c, const struct sim_conn_state *state);

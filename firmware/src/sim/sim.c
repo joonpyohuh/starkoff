@@ -344,3 +344,11 @@ size_t sim_status(char *buf, size_t len)
 	k_mutex_unlock(&sim_lock_mtx);
 	return MIN(n, len);
 }
+
+void sim_restore(int c, const struct sim_conn_state *state)
+{
+ if(!valid_conn(c)) return;
+ k_mutex_lock(&sim_lock_mtx,K_FOREVER);
+ conn[c]=*state; conn[c].relay=false; conn[c].power_w=0;
+ k_mutex_unlock(&sim_lock_mtx);
+}

@@ -53,7 +53,14 @@ class Responder:
         # List of (status, interval) for the next BootNotifications; when empty -> Accepted.
         self.boot_script = []
         self.valid_tags = {"TAG001": "Accepted", "TAG002": "Accepted"}
+        self.parents = {}
         self.overrides = {}   # action -> function(payload) -> response payload
+
+    def tag_info(self, tag):
+        info = {"status": self.valid_tags.get(tag, "Invalid")}
+        if tag in self.parents:
+            info["parentIdTag"] = self.parents[tag]
+        return info
 
     def answer(self, action, payload):
         if action in self.overrides:
@@ -65,11 +72,11 @@ class Responder:
         if action == "Heartbeat":
             return {"currentTime": utc_now_iso()}
         if action == "Authorize":
-            return {"idTagInfo": {"status": self.valid_tags.get(payload.get("idTag"), "Invalid")}}
+            return {"idTagInfo": self.tag_info(payload.get("idTag"))}
         if action == "StartTransaction":
             tx = next(Responder._tx_ids)
             return {"transactionId": tx,
-                    "idTagInfo": {"status": self.valid_tags.get(payload.get("idTag"), "Invalid")}}
+                    "idTagInfo": self.tag_info(payload.get("idTag"))}
         if action == "StopTransaction":
             return {"idTagInfo": {"status": "Accepted"}} if payload.get("idTag") else {}
         # StatusNotification, MeterValues, ... have empty confirmations
@@ -185,7 +192,11 @@ class CSMS:
                     continue
                 ev = await self._record("cp->cs", raw, msg)
                 if ev.type == 2:
-                    payload = self.responder.answer(ev.action, ev.payload or {})
+                    try:
+                        payload = self.responder.answer(ev.action, ev.payload or {})
+                    except CallError as exc:
+                        await self._send(conn, [4, ev.id, exc.code, str(exc), {}])
+                        continue
                     if payload is not None:   # None = do not answer (tests of timeouts)
                         await self._send(conn, [3, ev.id, payload])
                 elif ev.type in (3, 4) and ev.id in conn.pending:

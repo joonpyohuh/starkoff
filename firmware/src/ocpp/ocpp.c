@@ -15,63 +15,73 @@
  *   CALLRESULT [3, "<id>", {payload}]
  *   CALLERROR  [4, "<id>", "<errorCode>", "<description>", {details}]
  */
+#include "ocpp/ocpp.h"
+#include "ctrl/ctrl.h"
+#include "net/ws.h"
+#include "ocpp/auth.h"
+#include "ocpp/clock.h"
+#include "ocpp/config.h"
+#include "ocpp/connector.h"
+#include "ocpp/json.h"
+#include "sim/sim.h"
+#include "store/store.h"
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/random/random.h>
 #include <zephyr/sys/reboot.h>
-#include <zephyr/logging/log.h>
-#include "ocpp/ocpp.h"
-#include "ocpp/json.h"
-#include "ocpp/clock.h"
-#include "ocpp/config.h"
-#include "ocpp/connector.h"
-#include "net/ws.h"
-#include "sim/sim.h"
-#include "ctrl/ctrl.h"
 
 LOG_MODULE_REGISTER(ocpp, LOG_LEVEL_INF);
 
-#define FW_VERSION          "0.3.0"
-#define CALL_TIMEOUT_MS     30000  /* no answer -> treat connection as broken */
-#define BOOT_RETRY_DEFAULT  30     /* s, when the server gives interval 0 */
-#define BACKOFF_MIN_S       5
-#define BACKOFF_MAX_S       60
-#define LOOP_MS             50
+#define FW_VERSION "0.3.0"
+#define CALL_TIMEOUT_MS 30000 /* no answer -> treat connection as broken */
+#define BOOT_RETRY_DEFAULT 30 /* s, when the server gives interval 0 */
+#define BACKOFF_MIN_S 5
+#define BACKOFF_MAX_S 60
+#define LOOP_MS 50
 
-#define OUTQ_LEN            16
-#define OUT_PAYLOAD_MAX     1024
-#define RX_MAX              4096
-#define TX_MAX              4096
-#define LOG_MSG_MAX         300
+#define OUTQ_LEN 16
+#define OUT_PAYLOAD_MAX 1024
+#define RX_MAX 8192
+#define TX_MAX 4096
+#define LOG_MSG_MAX 300
 
 /* ---------------- state ---------------- */
 
 static enum boot_state boot = BOOT_NOT_SENT;
-static int64_t boot_retry_at;      /* uptime ms: earliest next BootNotification */
-static int64_t next_hb_at;         /* uptime ms: next Heartbeat */
+static int64_t boot_retry_at; /* uptime ms: earliest next BootNotification */
+static int64_t next_hb_at;    /* uptime ms: next Heartbeat */
 /* First attempt ~2 s after boot: by then QEMU's NAT has learned our MAC (link.c),
  * so the first SYN is answered instead of being retransmitted for several seconds. */
 static int64_t next_connect_at = 2000;
 static int backoff_s = BACKOFF_MIN_S;
-static bool dead;                  /* power is off: charger logic stopped */
+static int64_t power_down_at;
+static bool dead; /* power is off: charger logic stopped */
 static enum cp_status reported[CONN_MAX + 1];
+static bool reported_conflict;
+static enum cp_status stable_status[CONN_MAX + 1];
+static int64_t stable_since[CONN_MAX + 1];
 
 struct out_msg {
 	char action[32];
 	char payload[OUT_PAYLOAD_MAX]; /* may contain %TX% = real transactionId, filled at send */
-	bool tx_related;   /* transaction message: kept across reconnects */
-	int conn;          /* connector the message belongs to (answer routing) */
-	char tag[21];      /* idTag, for Authorize answers */
-	int tx_local;      /* local transaction number (connector.c) */
+	bool tx_related;	       /* transaction message: kept across reconnects */
+	int conn;		       /* connector the message belongs to (answer routing) */
+	char tag[21];		       /* idTag, for Authorize answers */
+	int tx_local;		       /* local transaction number (connector.c) */
+	int failures;
+	int64_t retry_at;
+	bool triggered;
 };
+static bool handling_trigger;
 static struct out_msg outq[OUTQ_LEN];
 static int outq_head, outq_count;
 
 static struct {
 	bool active;
-	bool from_queue;   /* true: queue head; false: BootNotification sent directly */
+	bool from_queue; /* true: queue head; false: BootNotification sent directly */
 	char id[40];
 	char action[32];
 	int64_t sent_at;
@@ -94,9 +104,49 @@ static char paybuf[OUT_PAYLOAD_MAX];
 static char sendbuf[OUT_PAYLOAD_MAX + 16];
 static struct jp jp;
 
+/* One A/B journal atomically records queue, transaction ids and the simulated world. */
+static struct checkpoint {
+	uint32_t version;
+	int count;
+	size_t conn_bytes;
+	struct out_msg messages[OUTQ_LEN];
+	uint8_t connectors[2048] __aligned(8);
+} snapshot, previous_snapshot;
+static bool recovered;
+static void checkpoint_save(void)
+{
+	memset(&snapshot, 0, sizeof(snapshot));
+	snapshot.version = 1;
+	snapshot.conn_bytes =
+	    conn_checkpoint_save(snapshot.connectors, sizeof(snapshot.connectors));
+	for (int i = 0; i < outq_count; i++) {
+		struct out_msg *m = &outq[(outq_head + i) % OUTQ_LEN];
+		if (m->tx_related)
+			snapshot.messages[snapshot.count++] = *m;
+	}
+	if (memcmp(&snapshot, &previous_snapshot, sizeof(snapshot)) &&
+	    !store_save(STORE_REC_QUEUE, &snapshot, sizeof(snapshot)))
+		previous_snapshot = snapshot;
+}
+static void checkpoint_load(void)
+{
+	if (store_load(STORE_REC_QUEUE, &snapshot, sizeof(snapshot)) != sizeof(snapshot) ||
+	    snapshot.version != 1 || snapshot.count < 0 || snapshot.count > OUTQ_LEN ||
+	    snapshot.conn_bytes > sizeof(snapshot.connectors))
+		return;
+	outq_count = snapshot.count;
+	outq_head = 0;
+	memcpy(outq, snapshot.messages, sizeof(outq));
+	for (int i = 0; i < outq_count; i++)
+		outq[i].retry_at = 0;
+	conn_checkpoint_load(snapshot.connectors, snapshot.conn_bytes);
+	previous_snapshot = snapshot;
+	recovered = true;
+}
+
 static const char *boot_str(enum boot_state b)
 {
-	static const char *const s[] = { "NotSent", "Sent", "Accepted", "Pending", "Rejected" };
+	static const char *const s[] = {"NotSent", "Sent", "Accepted", "Pending", "Rejected"};
 
 	return s[b];
 }
@@ -110,7 +160,12 @@ enum boot_state ocpp_boot_state(void)
 
 static void log_msg(const char *dir, const char *m)
 {
-	LOG_INF("%s %.*s%s", dir, LOG_MSG_MAX, m, strlen(m) > LOG_MSG_MAX ? "..." : "");
+	/* Zephyr deferred logging copies the full string even with a printf precision. */
+	char preview[LOG_MSG_MAX + 1];
+	size_t n = MIN(strlen(m), LOG_MSG_MAX);
+	memcpy(preview, m, n);
+	preview[n] = 0;
+	LOG_INF("%s %s%s", dir, preview, strlen(m) > n ? "..." : "");
 }
 
 static int send_frame(const char *frame)
@@ -189,7 +244,8 @@ int ocpp_enqueue_ex(const char *action, const char *payload, bool tx_related, in
 {
 	struct out_msg *m;
 
-	if (outq_count == OUTQ_LEN) {
+	if (outq_count == OUTQ_LEN ||
+	    (outq_count >= OUTQ_LEN - 2 && strcmp(action, "StopTransaction"))) {
 		LOG_ERR("outgoing queue full, %s dropped", action);
 		return -ENOMEM;
 	}
@@ -197,11 +253,23 @@ int ocpp_enqueue_ex(const char *action, const char *payload, bool tx_related, in
 		LOG_ERR("%s payload too large, dropped", action);
 		return -EMSGSIZE;
 	}
-	m = &outq[(outq_head + outq_count) % OUTQ_LEN];
+	int insert = outq_count;
+	/* Pending allows only messages explicitly requested by TriggerMessage.
+	 * Put those ahead of the persisted transaction backlog, without moving an in-flight head.
+	 */
+	if (boot == BOOT_PENDING && handling_trigger) {
+		insert = (inflight.active && inflight.from_queue) ? 1 : 0;
+		for (int i = outq_count; i > insert; i--)
+			outq[(outq_head + i) % OUTQ_LEN] = outq[(outq_head + i - 1) % OUTQ_LEN];
+	}
+	m = &outq[(outq_head + insert) % OUTQ_LEN];
 	strncpy(m->action, action, sizeof(m->action) - 1);
 	m->action[sizeof(m->action) - 1] = '\0';
 	strcpy(m->payload, payload);
 	m->tx_related = tx_related;
+	m->failures = 0;
+	m->retry_at = 0;
+	m->triggered = handling_trigger;
 	m->conn = conn;
 	strncpy(m->tag, tag ? tag : "", sizeof(m->tag) - 1);
 	m->tag[sizeof(m->tag) - 1] = '\0';
@@ -283,6 +351,8 @@ static void enqueue_status(int c)
 	jw_kv_int(&w, &first, "connectorId", c);
 	jw_kv_str(&w, &first, "errorCode", conn_error_code(c));
 	jw_kv_str(&w, &first, "status", conn_status_str(s));
+	if (s == ST_SUSPENDED_EV)
+		jw_kv_str(&w, &first, "info", "EV side disconnected");
 	jw_kv_str(&w, &first, "timestamp", ts);
 	jw_raw(&w, "}");
 	if (ocpp_enqueue("StatusNotification", paybuf, false) == 0) {
@@ -384,7 +454,10 @@ static void h_change_configuration(const char *id, int pl)
 {
 	char key[64], val[CFG_VAL_MAX];
 	static const char *const res_str[] = {
-		"Accepted", "Rejected", "RebootRequired", "NotSupported",
+	    "Accepted",
+	    "Rejected",
+	    "RebootRequired",
+	    "NotSupported",
 	};
 	enum cfg_set_result r;
 
@@ -394,6 +467,9 @@ static void h_change_configuration(const char *id, int pl)
 		return;
 	}
 	r = cfg_set(key, val, true);
+	if (r == CFG_ACCEPTED && (!strcasecmp(key, "MeterValueSampleInterval") ||
+				  !strcasecmp(key, "ClockAlignedDataInterval")))
+		conn_meter_config_changed();
 	snprintf(paybuf, sizeof(paybuf), "{\"status\":\"%s\"}", res_str[r]);
 	send_result(id, paybuf);
 	if (r == CFG_ACCEPTED && strcasecmp(key, "HeartbeatInterval") == 0) {
@@ -422,7 +498,8 @@ static void h_remote_start(const char *id, int pl)
 	}
 	bool given = jp_get(&jp, pl, "connectorId") >= 0;
 
-	/* Pending (spec 4.2), connectorId 0 or a connector we do not have (DESIGN_core 6/8): Rejected */
+	/* Pending (spec 4.2), connectorId 0 or a connector we do not have (DESIGN_core 6/8):
+	 * Rejected */
 	if (boot != BOOT_ACCEPTED || (given && (c < 1 || c > CONN_MAX))) {
 		reply_status(id, "Rejected");
 		return;
@@ -449,7 +526,7 @@ static void h_change_availability(const char *id, int pl)
 {
 	char type[16];
 	int c;
-	static const char *const res[] = { "Accepted", "Rejected", "Scheduled" };
+	static const char *const res[] = {"Accepted", "Rejected", "Scheduled"};
 
 	if (!jp_get_int(&jp, pl, "connectorId", &c) ||
 	    !jp_get_str(&jp, pl, "type", type, sizeof(type))) {
@@ -457,7 +534,8 @@ static void h_change_availability(const char *id, int pl)
 		return;
 	}
 	if (strcmp(type, "Operative") != 0 && strcmp(type, "Inoperative") != 0) {
-		send_error(id, "PropertyConstraintViolation", "type must be Operative or Inoperative");
+		send_error(id, "PropertyConstraintViolation",
+			   "type must be Operative or Inoperative");
 		return;
 	}
 	reply_status(id, res[conn_change_availability(c, strcmp(type, "Operative") == 0)]);
@@ -494,19 +572,113 @@ static void h_unlock(const char *id, int pl)
 	reply_status(id, conn_unlock(c));
 }
 
+static void h_local_version(const char *id, int pl)
+{
+	ARG_UNUSED(pl);
+	snprintf(paybuf, sizeof(paybuf), "{\"listVersion\":%d}", auth_version());
+	send_result(id, paybuf);
+}
+static void h_local_list(const char *id, int pl)
+{
+	reply_status(id, auth_list_update(&jp, pl));
+}
+static void h_clear_cache(const char *id, int pl)
+{
+	ARG_UNUSED(pl);
+	auth_clear_cache();
+	reply_status(id, "Accepted");
+}
+static void h_data_transfer(const char *id, int pl)
+{
+	char vendor[256];
+	if (!jp_get_str(&jp, pl, "vendorId", vendor, sizeof(vendor))) {
+		send_error(id, "FormationViolation", "vendorId required");
+		return;
+	}
+	reply_status(id, "UnknownVendorId");
+}
+static void h_reserve(const char *id, int pl)
+{
+	int c, r;
+	int64_t expiry;
+	char ts[40], tag[21], parent[21] = "";
+	if (!jp_get_int(&jp, pl, "connectorId", &c) || !jp_get_int(&jp, pl, "reservationId", &r) ||
+	    !jp_get_str(&jp, pl, "idTag", tag, sizeof(tag)) ||
+	    !jp_get_str(&jp, pl, "expiryDate", ts, sizeof(ts)) || !clock_parse_iso(ts, &expiry) ||
+	    (jp_get(&jp, pl, "parentIdTag") >= 0 &&
+	     !jp_get_str(&jp, pl, "parentIdTag", parent, sizeof(parent)))) {
+		send_error(id, "FormationViolation", "invalid reservation fields");
+		return;
+	}
+	reply_status(id, conn_reserve(c, r, tag, parent, expiry));
+}
+static void h_cancel_reservation(const char *id, int pl)
+{
+	int r;
+	if (!jp_get_int(&jp, pl, "reservationId", &r)) {
+		send_error(id, "FormationViolation", "reservationId required");
+		return;
+	}
+	reply_status(id, conn_cancel_reservation(r) ? "Accepted" : "Rejected");
+}
+static bool trigger_boot;
+static void h_trigger(const char *id, int pl)
+{
+	char action[40];
+	int c = 0;
+	bool given = jp_get(&jp, pl, "connectorId") >= 0;
+	if (!jp_get_str(&jp, pl, "requestedMessage", action, sizeof(action)) ||
+	    (given && !jp_get_int(&jp, pl, "connectorId", &c))) {
+		send_error(id, "FormationViolation", "invalid trigger fields");
+		return;
+	}
+	bool status = !strcmp(action, "StatusNotification"), meter = !strcmp(action, "MeterValues");
+	if ((status || meter) && given && (!conn_valid(c) || (meter && c == 0))) {
+		reply_status(id, "Rejected");
+		return;
+	}
+	if (!status && !meter && strcmp(action, "Heartbeat") &&
+	    strcmp(action, "BootNotification")) {
+		reply_status(id, "NotImplemented");
+		return;
+	}
+	reply_status(id, "Accepted");
+	handling_trigger = true;
+	if (status) {
+		if (given)
+			enqueue_status(c);
+		else
+			for (int i = 0; i <= CONN_MAX; i++)
+				enqueue_status(i);
+	} else if (meter)
+		conn_trigger_meter(c);
+	else if (!strcmp(action, "Heartbeat"))
+		ocpp_enqueue("Heartbeat", "{}", false);
+	else
+		trigger_boot = true;
+	handling_trigger = false;
+}
+
 struct call_handler {
 	const char *action;
 	void (*fn)(const char *id, int payload_tok);
 };
 
 static const struct call_handler handlers[] = {
-	{ "GetConfiguration", h_get_configuration },
-	{ "ChangeConfiguration", h_change_configuration },
-	{ "RemoteStartTransaction", h_remote_start },
-	{ "RemoteStopTransaction", h_remote_stop },
-	{ "ChangeAvailability", h_change_availability },
-	{ "Reset", h_reset },
-	{ "UnlockConnector", h_unlock },
+    {"GetConfiguration", h_get_configuration},
+    {"ChangeConfiguration", h_change_configuration},
+    {"RemoteStartTransaction", h_remote_start},
+    {"RemoteStopTransaction", h_remote_stop},
+    {"ChangeAvailability", h_change_availability},
+    {"Reset", h_reset},
+    {"UnlockConnector", h_unlock},
+    {"GetLocalListVersion", h_local_version},
+    {"SendLocalList", h_local_list},
+    {"ClearCache", h_clear_cache},
+    {"ReserveNow", h_reserve},
+    {"CancelReservation", h_cancel_reservation},
+    {"TriggerMessage", h_trigger},
+    {"DataTransfer", h_data_transfer},
 };
 
 static void handle_call(const char *id, const char *action, int pl)
@@ -534,13 +706,14 @@ static void handle_call(const char *id, const char *action, int pl)
 
 static void on_boot_conf(int pl)
 {
-	char status[16], ts[40];
+	char status[16] = "", ts[40];
 	int interval = 0;
 
 	jp_get_str(&jp, pl, "status", status, sizeof(status));
 	jp_get_int(&jp, pl, "interval", &interval);
 	if (jp_get_str(&jp, pl, "currentTime", ts, sizeof(ts))) {
 		clock_sync_iso(ts);
+		conn_clock_changed();
 	}
 	if (strcmp(status, "Accepted") == 0) {
 		boot = BOOT_ACCEPTED;
@@ -552,6 +725,10 @@ static void on_boot_conf(int pl)
 		}
 		heartbeat_reschedule();
 		report_all_status();
+		if (recovered) {
+			recovered = false;
+			conn_stop_all("PowerLoss");
+		}
 		LOG_INF("registered (Accepted), heartbeat every %d s",
 			cfg_get_int("HeartbeatInterval", 0));
 		return;
@@ -578,22 +755,27 @@ static void handle_result(const char *id, int pl)
 		on_boot_conf(pl);
 	} else if (strcmp(inflight.action, "Authorize") == 0 ||
 		   strcmp(inflight.action, "StartTransaction") == 0) {
-		char status[24] = "Invalid";
+		char status[24] = "Invalid", parent[21] = "";
 		int info = jp_get(&jp, pl, "idTagInfo");
 		int tx = -1;
 
 		jp_get_str(&jp, info, "status", status, sizeof(status));
+		jp_get_str(&jp, info, "parentIdTag", parent, sizeof(parent));
+		auth_update(inflight.tag, &jp, info);
 		if (inflight.action[0] == 'A') {
-			conn_on_authorize_conf(inflight.conn, inflight.tag, status);
+			conn_on_authorize_conf(inflight.conn, inflight.tag, status, parent);
 		} else {
 			jp_get_int(&jp, pl, "transactionId", &tx);
-			conn_on_start_conf(inflight.tx_local, tx, status);
+			conn_on_start_conf(inflight.tx_local, tx, status, parent);
 		}
+	} else if (!strcmp(inflight.action, "StopTransaction")) {
+		auth_update(inflight.tag, &jp, jp_get(&jp, pl, "idTagInfo"));
 	} else if (strcmp(inflight.action, "Heartbeat") == 0) {
 		char ts[40];
 
 		if (jp_get_str(&jp, pl, "currentTime", ts, sizeof(ts))) {
 			clock_sync_iso(ts);
+			conn_clock_changed();
 		}
 	}
 }
@@ -613,7 +795,16 @@ static void handle_error(const char *id, int code_tok)
 		boot_retry_at = k_uptime_get() + BOOT_RETRY_DEFAULT * 1000;
 		return;
 	}
-	/* Not retried yet (TransactionMessageAttempts comes with the resilience step). */
+	if (inflight.from_queue && outq_count && outq[outq_head].tx_related) {
+		struct out_msg *m = &outq[outq_head];
+		m->failures++;
+		if (m->failures < cfg_get_int("TransactionMessageAttempts", 3)) {
+			m->retry_at = k_uptime_get() +
+				      (int64_t)cfg_get_int("TransactionMessageRetryInterval", 60) *
+					  1000 * m->failures;
+			return;
+		}
+	}
 	conn_on_call_failed(inflight.action, inflight.conn, inflight.tx_local);
 	if (inflight.from_queue) {
 		outq_pop();
@@ -626,8 +817,8 @@ static void dispatch(char *msg, int len)
 	int type;
 
 	log_msg("<<", msg);
-	if (jp_parse(&jp, msg, len) < 1 || !jp_is_type(&jp, 0, JSMN_ARRAY) ||
-	    jp.tok[0].size < 3 || !jp_int(&jp, 1, &type) || !jp_str(&jp, 2, id, sizeof(id))) {
+	if (jp_parse(&jp, msg, len) < 1 || !jp_is_type(&jp, 0, JSMN_ARRAY) || jp.tok[0].size < 3 ||
+	    !jp_int(&jp, 1, &type) || !jp_str(&jp, 2, id, sizeof(id))) {
 		LOG_WRN("not an OCPP-J message, ignored");
 		return;
 	}
@@ -709,11 +900,17 @@ static void handle_hw_event(const struct sim_evt *e)
 {
 	switch (e->type) {
 	case SIM_EVT_POWER_OFF:
-		/* No backup power (BackupPower=false): everything just stops.
-		 * BackupPower=true handling comes with the resilience step. */
+		/* Commit the stop before simulated shutdown. Backup power permits up to
+		 * five seconds to deliver it; otherwise replay only after the next boot. */
 		LOG_WRN("mains power lost: charger stops");
-		dead = true;
-		ws_close();
+		conn_stop_all("PowerLoss");
+		checkpoint_save();
+		if (cfg_get_bool("BackupPower")) {
+			power_down_at = k_uptime_get() + 5000;
+		} else {
+			dead = true;
+			ws_close();
+		}
 		break;
 	case SIM_EVT_POWER_ON:
 		LOG_WRN("mains power back: rebooting");
@@ -746,8 +943,10 @@ static void timers(void)
 		ws_close(); /* connection_manager() does the cleanup */
 		return;
 	}
-	if (!inflight.active && (boot == BOOT_NOT_SENT ||
-	    ((boot == BOOT_PENDING || boot == BOOT_REJECTED) && now >= boot_retry_at))) {
+	if (!inflight.active &&
+	    (trigger_boot || boot == BOOT_NOT_SENT ||
+	     ((boot == BOOT_PENDING || boot == BOOT_REJECTED) && now >= boot_retry_at))) {
+		trigger_boot = false;
 		send_boot();
 		return;
 	}
@@ -761,22 +960,34 @@ static void timers(void)
 
 static void report_status_changes(void)
 {
-	if (boot != BOOT_ACCEPTED) {
+	if (!ocpp_online()) {
 		return;
 	}
 	for (int c = 0; c <= CONN_MAX; c++) {
-		if (conn_status(c) != reported[c]) {
+		enum cp_status current = conn_status(c);
+		if (current != stable_status[c]) {
+			stable_status[c] = current;
+			stable_since[c] = k_uptime_get();
+		}
+		if ((current != reported[c] || (c == 0 && reported_conflict != auth_conflict())) &&
+		    k_uptime_get() - stable_since[c] >=
+			(int64_t)cfg_get_int("MinimumStatusDuration", 0) * 1000) {
 			enqueue_status(c);
+			if (c == 0)
+				reported_conflict = auth_conflict();
 		}
 	}
 }
 
 static void send_next(void)
 {
-	if (!ws_is_up() || boot != BOOT_ACCEPTED || inflight.active || outq_count == 0) {
+	if (!ws_is_up() || (boot != BOOT_ACCEPTED && boot != BOOT_PENDING) || inflight.active ||
+	    outq_count == 0) {
 		return;
 	}
 	struct out_msg *m = &outq[outq_head];
+	if ((boot == BOOT_PENDING && !m->triggered) || k_uptime_get() < m->retry_at)
+		return;
 	const char *ph = strstr(m->payload, "%TX%");
 
 	if (ph) {
@@ -819,9 +1030,11 @@ void ocpp_run(void)
 
 	msg_prefix = sys_rand32_get();
 	conn_init();
+	checkpoint_load();
 	report_all_status();
 	ctrl_set_status_hook(status_hook);
-	LOG_INF("OCPP 1.6J charge point %s, server %s", cfg_get(CFG_CP_ID), cfg_get(CFG_SERVER_URL));
+	LOG_INF("OCPP 1.6J charge point %s, server %s", cfg_get(CFG_CP_ID),
+		cfg_get(CFG_SERVER_URL));
 
 	while (1) {
 		int n;
@@ -850,8 +1063,15 @@ void ocpp_run(void)
 		conn_tick();
 		report_status_changes();
 		send_next();
-		if (reset_req.pending &&
-		    ((outq_count == 0 && !inflight.active) || k_uptime_get() > reset_req.deadline)) {
+		checkpoint_save();
+		if (power_down_at &&
+		    (k_uptime_get() >= power_down_at || (!outq_count && !inflight.active))) {
+			dead = true;
+			power_down_at = 0;
+			ws_close();
+		}
+		if (reset_req.pending && ((outq_count == 0 && !inflight.active) ||
+					  k_uptime_get() > reset_req.deadline)) {
 			LOG_WRN("rebooting for Reset (%d messages left in queue)", outq_count);
 			k_msleep(200);
 			sys_reboot(SYS_REBOOT_COLD);

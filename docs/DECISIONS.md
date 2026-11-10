@@ -149,3 +149,43 @@ Each entry: what was decided, why, and what was given up. Newest at the bottom.
 - TC_012가 실패했는데 펌웨어는 정상이었다. 시험 도구가 RemoteStop 응답을 받은 뒤 "본 위치"를 이벤트 목록
   끝으로 옮겨서, 응답 직후 도착한 StopTransaction을 건너뛰었다. 응답 이벤트 바로 다음으로 옮기도록 고쳤다.
 - 같이 고친 것: 가짜 CSMS가 시험마다 transactionId를 1부터 다시 줘서 로그가 헷갈렸다. 이제 계속 증가.
+
+## D26. 로컬 목록과 인증 캐시는 별도 저장
+- `docs/DESIGN_core.md` 10~11절과 규격 3.5에 따라 로컬 목록을 먼저 조회한다. 목록 32개,
+  한 번의 SendLocalList는 16개까지 받는다. 캐시는 32개이며 무효 항목, 마지막 사용이 오래된 항목 순서로 교체한다.
+- Full/Differential은 임시 복사본에서 검증하고 A/B 저장에 성공한 뒤 적용한다. 중복 idTag, 잘못된 상태·시각,
+  용량 초과는 Failed로 처리한다. Differential 버전은 현재보다 **크면** 허용한다(규격 7.47, TC_043_2).
+- 목록이 비면 GetLocalListVersion은 0이다. 목록이 비어도 마지막 업데이트 버전은 내부에 유지한다.
+  목록 저장 실패는 제어 포트 `cfg set _StoreFail true`로 주입한다. 시험 후 false로 돌린다.
+
+## D27. 예약 만료는 타이머 하나, 그룹은 parentIdTag 비교
+- 1개 커넥터 구성이라 connectorId=0 예약도 1번을 사용자에게 비워 둔다. 상태 알림은 커넥터 1에 Reserved,
+  커넥터 0에는 Available/Unavailable/Faulted만 사용한다. 규격 3.8·4.9와 TC_049 기준이다.
+- 예약을 비휘발 저장하고, 서버 시각 동기화 후 expiryDate까지의 시간을 계산해 Zephyr 타이머를 건다.
+  타이머 콜백은 플래그만 세우고 실제 저장·상태 변경은 메인 루프가 처리한다.
+- 예약 카드 또는 같은 parentIdTag 카드가 시작하면 StartTransaction에 reservationId를 넣고 예약을 해제한다.
+  충전 중 다른 카드의 종료 권한도 parentIdTag로 확인한다. 부모 그룹이 없는 거래는 같은 카드로만 종료한다.
+
+## D28. 큐와 거래 번호·하드웨어 상태를 하나의 체크포인트로 기록
+- 큐만 저장하면 재부팅 후 `%TX%`를 실제 transactionId로 바꿀 수 없다. 따라서 큐와 거래 번호 매핑,
+  커넥터 상태 및 가짜 하드웨어를 한 A/B 레코드에 저장한다. 큰 복사본은 static 메모리에 둔다.
+- 기존 설정 레코드 위치는 유지한다. 큐 전용 슬롯은 NVM의 0x10000/0x18000에 각각 32 KiB를 배정한다.
+  로컬 목록·캐시·예약은 기존 4 KiB 레코드 3·4·5를 사용한다.
+- 메인 루프가 바뀐 체크포인트만 기록한다. `power off` 이벤트와 Reset 재부팅 전에는 기록을 마친다.
+  QEMU 프로세스를 임의로 강제 종료하는 순간의 완전한 무손실 및 호스트 디스크 fsync는 보장하지 않는다.
+- 재부팅 후 남은 진행 거래는 Boot Accepted 후 PowerLoss로 종료한다. Reset으로 이미 종료한 거래는 다시 종료하지 않는다.
+- 큐는 16개 고정이며 종료 메시지용 2칸을 남긴다. 제한을 넘는 새 요청은 로그에 남기고 거절한다.
+  새 StartTransaction을 기록할 수 없으면 릴레이를 열고 시작을 취소한다. 장기 오프라인에서 미터값 무손실은 보장하지 않는다.
+
+## D29. 웹 UI는 로컬 실험실 도구
+- 기존 `lab/web/` 초안을 이어서 HTML·JS·CSS와 Python websockets 서버로 구현했다. npm이나 웹 빌드는 없다.
+- 카드·케이블 조작은 TCP 제어 포트, 원격 시작·예약은 가짜 CSMS의 OCPP 호출을 사용한다.
+  시험 버튼은 CLI와 동일한 `lab/tests/` 시나리오를 실행한다. 시험 시 상태를 초기화하므로 데모 세션과 섞지 않는다.
+- 로컬 호스트로만 바인딩하고 WebSocket Origin을 검사한다. 브라우저에서 임의 제어 줄을 여러 개 주입하지 못하도록 줄바꿈을 거절한다.
+- SQLite에 OCPP 이벤트와 UI에서 카드→케이블 연결까지의 시간을 저장한다. 직접 만든 데모 데이터이며 현장 운영 통계가 아니다.
+  파일: `lab/results/telemetry.sqlite3`. 평균·최대는 이 UI 조작 표본만 집계한다.
+
+## D30. 미터 타이머는 설정 변경과 UTC 자정에서 다시 계산
+- 충전 도중 MeterValueSampleInterval을 바꾸면 그 순간부터 새 간격을 적용한다. 0이면 중지한다.
+- ClockAlignedDataInterval이 86400을 나누어떨어지지 않아도 다음 날 UTC 00:00부터 정렬을 다시 시작한다.
+- X_METER_RECONFIG는 충전 중 간격 변경과 23:59:58→다음 날 00:00:00 경계를 가짜 서버 시각으로 검사한다.

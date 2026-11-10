@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>충전기 실험실</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top">
+  <h1>충전기 실험실 <small>OCPP 1.6J · QEMU</small></h1>
+  <div class="badges">
+    <span class="badge" id="b-fw"><i></i>펌웨어</span>
+    <span class="badge" id="b-csms"><i></i>CSMS 연결</span>
+    <span class="badge" id="b-boot"><i></i>부팅: -</span>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="left">
+    <!-- ===== scene: charger, cable, car ===== -->
+    <div class="card scene-card">
+      <div class="scene" id="scene">
+        <svg class="cable" id="cable" aria-hidden="true"><path id="cable-path"/></svg>
+
+        <div class="charger" id="charger">
+          <div class="charger-head">
+            <span class="led" id="led" title="상태등: 펌웨어가 정상일 때만 켜짐"></span>
+            <span class="pwr" id="pwr" title="전원">전원</span>
+          </div>
+          <div class="screen" id="screen">
+            <div class="s-status" id="s-status">연결 대기</div>
+            <div class="s-energy" id="s-energy">0.00 kWh</div>
+            <div class="s-sub" id="s-sub">&nbsp;</div>
+          </div>
+          <div class="reader" id="reader">카드를<br>여기에 대세요</div>
+          <div class="holster" id="holster" title="케이블 거치대"></div>
+        </div>
+
+        <button type="button" class="plug" id="plug" aria-label="충전 케이블 꽂기 또는 뽑기" title="클릭하거나 차로 끌어서 꽂기 / 뽑기"></button>
+
+        <div class="car" id="car">
+          <div class="car-roof"></div>
+          <div class="car-body">
+            <div class="port" id="port" title="충전구"></div>
+            <div class="battery"><div class="battery-fill" id="battery"></div></div>
+          </div>
+          <div class="wheel w1"></div><div class="wheel w2"></div>
+        </div>
+      </div>
+
+      <div class="wallet">
+        <span class="wallet-label">카드 (충전기 화면 아래로 끌어다 놓기)</span>
+        <button type="button" class="rfid" data-tag="TAG001">TAG001<small>유효 카드</small></button>
+        <button type="button" class="rfid c2" data-tag="TAG002">TAG002<small>유효 카드 2</small></button>
+        <button type="button" class="rfid bad" data-tag="BADTAG">BADTAG<small>무효 카드</small></button>
+      </div>
+    </div>
+
+    <!-- ===== controls ===== -->
+    <div class="card controls">
+      <h2>상황 만들기</h2>
+      <div class="btns">
+        <button data-cmd="plug 1">케이블 꽂기</button>
+        <button data-cmd="unplug 1">케이블 뽑기</button>
+        <button data-cmd="ev_disconnect 1">차 쪽 분리</button>
+        <button data-cmd="power off" class="warn">전원 차단</button>
+        <button data-cmd="power on">전원 복구</button>
+        <button data-cmd="net_down" class="warn">네트워크 끊기</button>
+        <button data-cmd="net_up">네트워크 연결</button>
+        <button data-cmd="fault 1 overtemp" class="warn">과열</button>
+        <button data-cmd="fault 1 overcurrent" class="warn">과전류</button>
+        <button data-cmd="fault 1 off">고장 해제</button>
+        <button data-cmd="lock_fail 1 on" class="warn">잠금 고장</button>
+        <button data-cmd="lock_fail 1 off">잠금 정상</button>
+      </div>
+      <div class="toast" id="toast" role="status"></div>
+    </div>
+
+    <div class="card controls">
+      <h2>서버에서 조작</h2>
+      <div class="remote-form">
+        <label>카드 ID <input id="remote-tag" value="TAG001" maxlength="20" autocomplete="off"></label>
+        <label>예약 번호 <input id="reservation-id" type="number" value="100" min="0"></label>
+        <label>예약 시간 (분) <input id="reservation-minutes" type="number" value="5" min="1" max="1440"></label>
+      </div>
+      <div class="btns">
+        <button id="remote-start">원격 충전 시작</button><button id="remote-stop">원격 충전 종료</button>
+        <button id="reserve">예약</button><button id="cancel-reserve">예약 취소</button>
+        <button id="trigger-meter">미터값 요청</button><button id="list-version">로컬 목록 버전</button>
+        <button id="install-list">유효 카드 2장 등록</button><button id="clear-cache">인증 캐시 비우기</button>
+      </div>
+      <p id="remote-reply" role="status">요청과 응답은 오른쪽 OCPP 로그에 기록됩니다.</p>
+    </div>
+    <div class="card controls">
+      <h2>연결 대기시간</h2>
+      <div class="metrics"><span>횟수 <strong id="metric-count">0</strong></span>
+        <span>평균 <strong id="metric-mean">—</strong></span><span>최대 <strong id="metric-max">—</strong></span></div>
+      <p class="hint">이 UI에서 카드를 대고 케이블을 꽂기까지의 데모 측정값입니다. 현장 통계가 아닙니다.</p>
+    </div>
+    <!-- ===== tests ===== -->
+    <div class="card tests">
+      <div class="tests-head">
+        <h2>시험 <small id="test-summary"></small></h2>
+        <button id="run-all" class="primary">전체 실행</button>
+      </div>
+      <div class="test-grid" id="test-grid"></div>
+      <div class="test-detail" id="test-detail">시험 버튼을 누르면 자동으로 시나리오를 실행하고 결과를 보여줍니다.</div>
+    </div>
+  </section>
+
+  <!-- ===== OCPP log ===== -->
+  <section class="card log-card">
+    <div class="log-head">
+      <h2>OCPP 메시지 <small>UTC</small></h2>
+      <label><input type="checkbox" id="hide-hb" checked> Heartbeat 숨기기</label>
+      <button id="clear-log">지우기</button>
+    </div>
+    <div class="log" id="log"></div>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

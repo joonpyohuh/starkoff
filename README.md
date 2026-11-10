@@ -5,11 +5,10 @@ OCPP 1.6J(WebSocket 위의 JSON) 충전기(Charge Point) 펌웨어입니다. **Z
 실제 충전기가 다루는 바깥 세계(케이블, 차, RFID 카드, 릴레이, 커넥터 잠금, 전력량계, 전원, 네트워크
 선, 센서)는 펌웨어 안의 "가짜 하드웨어" 계층으로 흉내 내고, UART 쉘이나 TCP 제어 포트로 조작합니다.
 
-> **현재 상태 (2026-11-10)**: BootNotification · Heartbeat · StatusNotification · Get/ChangeConfiguration이
-> 동작하고, 해당 OCTT 시나리오를 우리 실험실에서 통과합니다. **충전(트랜잭션) 기능은 아직 없습니다.**
-> 된다고 적은 것은 모두 직접 실행해서 확인한 것입니다. 자세한 내용은 [4. 현재 상태](#4-현재-상태)와
-> [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)를 보세요. 아래 1절의 깨끗한 Ubuntu 22.04 설치 절차는
-> **아직 새 PC에서 처음부터 검증하지 않았습니다** (제출 전에 검증 예정).
+> **현재 상태 (2026-11-10)**: 기본 충전 로직과 `docs/DESIGN_core.md`의 추가 프로파일
+> (로컬 인증 목록, 예약, RemoteTrigger), 로컬 웹 UI를 구현했습니다. 검증 결과와 한계는
+> [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)에 구분합니다. 공식 OCTT 인증 결과는 아닙니다.
+> 깨끗한 Ubuntu 22.04에서 처음부터 설치하는 절차는 아직 검증하지 않았습니다.
 
 ---
 
@@ -71,6 +70,31 @@ scripts/run_lab.sh --list                          # 테스트 목록
 scripts/run_lab.sh --qemu --all --markdown         # 펌웨어를 직접 띄우고 전부 실행, 결과 표 출력
 scripts/run_lab.sh --qemu --test TC_001_CS         # 하나만
 ```
+### 1.7 웹 UI로 조작하기
+```bash
+scripts/run_lab.sh --qemu --web
+```
+브라우저에서 **http://127.0.0.1:8080** 을 엽니다. `--qemu`는 공장 초기 상태로 시작합니다.
+기존 QEMU를 사용하려면 `scripts/run_lab.sh --web`을 실행합니다.
+
+- 케이블을 차로 끌거나 버튼으로 꽂고, 카드를 충전기 리더로 끕니다. 키보드로 카드 버튼을 선택해도 됩니다.
+- 원격 시작·종료, 예약·취소, 미터값 요청과 로컬 카드 목록 등록은 실제 OCPP 메시지로 전송합니다.
+- 시험 버튼은 CLI와 같은 시나리오를 실행합니다. **시험은 충전기 상태·설정·예약·인증 목록을 초기화합니다.**
+- 오른쪽 로그에서 메시지를 누르면 JSON 전문을 볼 수 있습니다.
+- 카드→케이블 연결 평균·최대는 **이 UI에서 직접 조작한 데모 데이터**입니다. 현장 통계가 아닙니다.
+  OCPP 이벤트와 측정값은 Python 내장 SQLite로 `lab/results/telemetry.sqlite3`에 저장됩니다.
+- 포트 변경: `--web-port 8081`. 서버는 로컬 PC에서만 접속할 수 있도록 바인딩합니다.
+- Ctrl-C로 UI·CSMS와 이 명령이 실행한 QEMU를 함께 종료합니다.
+
+선택 사항인 자동 브라우저 검증은 별도 환경에서 실행합니다 (일반 UI 사용에는 필요 없음):
+```bash
+python3 -m venv /tmp/starkoff-ui-check
+/tmp/starkoff-ui-check/bin/pip install playwright
+/tmp/starkoff-ui-check/bin/playwright install --with-deps chromium
+# 위의 --qemu --web 서버가 실행 중일 때 (가짜 충전기 상태를 변경함)
+/tmp/starkoff-ui-check/bin/python lab/web/check_ui.py
+```
+
 직접 조작하고 싶다면 터미널 세 개로:
 ```bash
 scripts/run_lab.sh --csms          # 터미널 1: 가짜 CSMS (ws://0.0.0.0:9000/ocpp/<id>), 모든 메시지 출력
@@ -130,16 +154,17 @@ nc 127.0.0.1 7000                              # 대화형: 명령을 치면 응
 | CSMS로 WebSocket 연결 (`ocpp1.6`, PING에 PONG 응답) | 됨 | 가짜 CSMS(20초마다 PING)와 연결 유지 |
 | BootNotification Accepted / Pending / Rejected, `interval` 뒤 재전송 | 됨 | TC_001_CS, TC_002_CS, X_REJECTED_SILENT |
 | BootNotification.conf의 interval로 Heartbeat | 됨 | TC_001_CS (간격 10.0초) |
-| 부팅 시 / 변경 시 커넥터 0, 1의 StatusNotification | 됨 (Available / Preparing / Faulted만) | TC_001_CS, 수동 `plug` / `fault` |
+| 부팅 시 / 변경 시 커넥터 0, 1의 StatusNotification | 됨 (9개 커넥터 상태) | TC_001_CS, 수동 `plug` / `fault` |
 | GetConfiguration / ChangeConfiguration (값 검사 포함) | 됨 | TC_019_CS, TC_021_CS |
 | 모르는 메시지 → CALLERROR NotImplemented | 됨 | X_NOTIMPL |
 | 오프라인 판정(소켓 끊김, 30초 무응답), 간격을 늘리며 재연결, 재연결 뒤 Boot 다시 안 보냄 | 됨 | X_RECONNECT, CSMS 없이 실행한 로그 |
 | `currentTime`으로 UTC 시계 동기화 | 됨 | StatusNotification의 timestamp |
 | TCP 제어 포트 + UART 쉘, 재부팅 · QEMU 재시작 뒤 설정 유지 | 됨 | 2단계 점검 |
 | 스레드 스택 넘침 감시 (넘치면 즉시 "Stack overflow"로 멈춤) | 켜 둠 | 실제 버그를 이걸로 찾음 (D20) |
-| Authorize, Start/StopTransaction, MeterValues, RemoteStart/Stop, Reset, ChangeAvailability, UnlockConnector | **아직 구현 안 됨** | — |
-| 오프라인 트랜잭션 큐, 정전 복구, 인증 캐시 | **아직 구현 안 됨** | — |
-| 웹 UI | **아직 구현 안 됨** | — |
+| Authorize, Start/StopTransaction, MeterValues, RemoteStart/Stop, Reset, ChangeAvailability, UnlockConnector | 구현 | TEST_RESULTS.md의 시험별 결과 |
+| 오프라인 큐·체크포인트, 정전 복구, 인증 캐시 | 구현 (고정 용량 한계 있음) | TEST_RESULTS.md |
+| 로컬 목록·예약·트리거 메시지·DataTransfer | 구현 | TEST_RESULTS.md |
+| 웹 UI | 구현 | 1.7절, 검증 범위는 TEST_RESULTS.md |
 | 깨끗한 Ubuntu 22.04 절차 (1절) | **아직 검증 안 됨** | 제출 전 예정 |
 
 시험별 결과: [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)
@@ -147,6 +172,13 @@ nc 127.0.0.1 7000                              # 대화형: 명령을 치면 응
 ---
 
 ## 5. 알려진 한계
+- FirmwareManagement, SmartCharging, TLS·보안 확장은 지원하지 않습니다.
+- 로컬 목록은 32개, 한 번의 SendLocalList는 16개, 인증 캐시는 32개, 출력 큐는 16개입니다.
+  종료 메시지용 2칸을 남기며, 장기 오프라인에서는 미터값 일부가 거절될 수 있습니다.
+- 체크포인트는 메인 루프마다 변경된 경우 기록합니다. QEMU 강제 종료 순간과 호스트 디스크 장애까지
+  완전한 무손실을 보장하지 않습니다. 시뮬레이션 `power off/on`과 프로토콜 Reset을 시험합니다.
+- StopTxnSampledData/StopTxnAlignedData에 따른 종료 메시지의 상세 transactionData 집계는 미구현입니다.
+- 소프트웨어 워치독, 케이블 신호 노이즈·디바운싱 보너스는 미구현입니다.
 - **비휘발 메모리는 호스트 파일입니다.** QEMU의 `ivshmem` 장치로 1 MiB 파일을 펌웨어 메모리에
   연결합니다 (`qemu_x86`에는 꺼져도 남는 flash가 없음). 실제 충전기라면 flash/FRAM이고, 바뀌는 곳은
   `firmware/src/store/store.c` 하나입니다. DECISIONS D9.
@@ -167,7 +199,7 @@ nc 127.0.0.1 7000                              # 대화형: 명령을 치면 응
 - **저(작성자)**: 요구사항, 범위와 시험 우선순위, 오프라인 · 정전 · 고장 설계
   ([docs/DESIGN_resilience.md](docs/DESIGN_resilience.md)), 기본 기능 설계 ([docs/DESIGN_core.md](docs/DESIGN_core.md)),
   설계 결정, 단계마다 검토와 지시.
-- **AI (Claude Code)**: 제 지시에 따라 코드와 문서 대부분을 작성하고, 빌드 · QEMU 테스트를 실행하고,
+- **AI (Claude Code, Codex)**: 제 지시에 따라 코드와 문서 대부분을 작성하고, 빌드 · QEMU 테스트를 실행하고,
   문제를 디버깅했습니다. 단계별 기록은 [docs/AI_USAGE.md](docs/AI_USAGE.md)에 있습니다.
 - **사용한 오픈소스**: Zephyr RTOS(RTOS, TCP/IP, WebSocket 클라이언트, 쉘), jsmn v1.1.0(JSON 토크나이저,
   MIT, `firmware/lib/jsmn/`), 파이썬 `websockets` 12.0(가짜 CSMS 전용).
@@ -182,7 +214,7 @@ firmware/   Zephyr 앱 (C) — 실제 제출물
   src/ctrl/   UART 쉘 + TCP 제어 포트
   src/store/  비휘발 기록 저장
   lib/jsmn/   JSON 토크나이저 (외부, MIT)
-lab/        호스트 도구 (가짜 CSMS, 테스트, 이후 웹 UI) — 펌웨어에 포함되지 않음
+lab/        호스트 도구 (가짜 CSMS, 테스트, 웹 UI) — 펌웨어에 포함되지 않음
   csms/       가짜 Central System (OCPP 1.6J WebSocket 서버)
   tests/      OCTT 시나리오(core.py)와 추가 점검(extra.py, X_로 시작)
 scripts/    build.sh, run_qemu.sh, ctl.sh, setup_lab.sh, run_lab.sh

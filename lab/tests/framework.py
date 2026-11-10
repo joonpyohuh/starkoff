@@ -164,6 +164,25 @@ class Ctx:
         no faults, no transaction, no authorization, connectors operative, cable out."""
         await self.ctrl.cmd("net_up")
         await self.ctrl.cmd("power on")
+        deadline = time.monotonic() + 45
+        while time.monotonic() < deadline:
+            st = await self.ctrl.status()
+            if st.get("boot") == "Accepted" and st.get("ws") == "up" and self.csms.conns:
+                break
+            await asyncio.sleep(0.25)
+        if self.csms.conns:
+            for ident in (10, 11, 100):
+                await self.conn().call("CancelReservation", {"reservationId": ident}, 5)
+            await self.conn().call("SendLocalList", {"listVersion": 1, "updateType": "Full"}, 5)
+            await self.conn().call("ClearCache", {}, 5)
+        for key, value in {"LocalPreAuthorize": "false", "LocalAuthorizeOffline": "true",
+                           "AuthorizationCacheEnabled": "true", "LocalAuthListEnabled": "true",
+                           "ClockAlignedDataInterval": "0", "MeterValueSampleInterval": "60",
+                           "MinimumStatusDuration": "0", "ConnectionTimeOut": "30",
+                           "TransactionMessageAttempts": "3", "TransactionMessageRetryInterval": "60",
+                           "StopTransactionOnEVSideDisconnect": "true", "UnlockConnectorOnEVSideDisconnect": "true",
+                           "AllowOfflineTxForUnknownId": "false", "BackupPower": "false", "_StoreFail": "false"}.items():
+            await self.ctrl.cmd(f"cfg set {key} {value}")
         for c in range(1, 2):
             await self.ctrl.cmd(f"fault {c} off")
             await self.ctrl.cmd(f"lock_fail {c} off")

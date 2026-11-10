@@ -9,11 +9,12 @@
  * Before the first sync the clock is "not valid"; callers then still get a
  * timestamp (1970 + uptime) but can check clock_valid().
  */
+#include "ocpp/clock.h"
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <zephyr/kernel.h>
-#include "ocpp/clock.h"
 
 static int64_t base_epoch;  /* seconds */
 static int64_t base_uptime; /* ms */
@@ -55,25 +56,32 @@ bool clock_parse_iso(const char *s, int64_t *epoch_out)
 	if (sscanf(s, "%4d-%2d-%2dT%2d:%2d:%2d%n", &y, &mo, &d, &h, &mi, &sec, &n) != 6) {
 		return false;
 	}
-	if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || sec > 60) {
+	static const int month_days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+	if (y < 1970 || mo < 1 || mo > 12 || d < 1 || h < 0 || h > 23 || mi < 0 || mi > 59 ||
+	    sec < 0 || sec > 59)
 		return false;
-	}
+	int days = month_days[mo - 1] + (mo == 2 && y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+	if (d > days)
+		return false;
 	t = days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + sec;
 	s += n;
 	if (*s == '.') {
 		s++;
-		while (*s >= '0' && *s <= '9') {
-			s++;
-		}
-	}
-	if (*s == '+' || *s == '-') {
-		int oh = 0, om = 0;
-
-		if (sscanf(s + 1, "%2d:%2d", &oh, &om) < 1) {
+		if (!isdigit((unsigned char)*s))
 			return false;
-		}
-		t += (*s == '+' ? -1 : 1) * (oh * 3600 + om * 60);
+		while (isdigit((unsigned char)*s))
+			s++;
 	}
+	if (*s == 'Z' && !s[1]) {
+	} else if ((*s == '+' || *s == '-') && strlen(s) == 6 && s[3] == ':' &&
+		   isdigit((unsigned char)s[1]) && isdigit((unsigned char)s[2]) &&
+		   isdigit((unsigned char)s[4]) && isdigit((unsigned char)s[5])) {
+		int oh = (s[1] - '0') * 10 + s[2] - '0', om = (s[4] - '0') * 10 + s[5] - '0';
+		if (oh > 23 || om > 59)
+			return false;
+		t += (*s == '+' ? -1 : 1) * (oh * 3600 + om * 60);
+	} else
+		return false;
 	*epoch_out = t;
 	return true;
 }
@@ -90,8 +98,8 @@ void clock_format_iso(int64_t epoch, char *out, size_t len)
 		days--;
 	}
 	civil_from_days(days, &y, &m, &d);
-	snprintf(out, len, "%04d-%02u-%02uT%02d:%02d:%02dZ", y, m, d,
-		 (int)(rem / 3600), (int)(rem % 3600 / 60), (int)(rem % 60));
+	snprintf(out, len, "%04d-%02u-%02uT%02d:%02d:%02dZ", y, m, d, (int)(rem / 3600),
+		 (int)(rem % 3600 / 60), (int)(rem % 60));
 }
 
 bool clock_sync_iso(const char *iso)
@@ -107,17 +115,8 @@ bool clock_sync_iso(const char *iso)
 	return true;
 }
 
-bool clock_valid(void)
-{
-	return valid;
-}
+bool clock_valid(void) { return valid; }
 
-int64_t clock_now(void)
-{
-	return base_epoch + (k_uptime_get() - base_uptime) / 1000;
-}
+int64_t clock_now(void) { return base_epoch + (k_uptime_get() - base_uptime) / 1000; }
 
-void clock_now_iso(char *out, size_t len)
-{
-	clock_format_iso(clock_now(), out, len);
-}
+void clock_now_iso(char *out, size_t len) { clock_format_iso(clock_now(), out, len); }

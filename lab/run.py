@@ -5,6 +5,7 @@ Lab command line.
   python -m lab.run --qemu --test TC_001_CS          start firmware in QEMU (fresh), run a test
   python -m lab.run --qemu --all --markdown          every test, print a README table
   python -m lab.run --csms                           only run the mock CSMS (Ctrl-C to stop)
+  python -m lab.run --qemu --web                     firmware + CSMS + web UI on http://127.0.0.1:8080
 
 Without --qemu the firmware must already be running (scripts/run_qemu.sh) and
 pointing at this CSMS (default ws://10.0.2.2:9000/ocpp).
@@ -19,7 +20,7 @@ import time
 
 from lab.csms.csms import CSMS
 from lab.ctrl import Ctrl
-from lab.tests import core, extra  # noqa: F401  (registers test cases)
+from lab.tests import core, extra, profiles  # noqa: F401  (registers test cases)
 from lab.tests.framework import TESTS, run_one
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -57,6 +58,8 @@ async def main():
     ap.add_argument("--all", action="store_true", help="run every test case")
     ap.add_argument("--qemu", action="store_true", help="start the firmware in QEMU first")
     ap.add_argument("--csms", action="store_true", help="only run the mock CSMS")
+    ap.add_argument("--web", action="store_true", help="run the CSMS + web UI (http://127.0.0.1:8080)")
+    ap.add_argument("--web-port", type=int, default=8080, help="web UI port")
     ap.add_argument("--markdown", action="store_true", help="print results as a Markdown table")
     ap.add_argument("--port", type=int, default=9000, help="CSMS WebSocket port")
     ap.add_argument("--ctrl-port", type=int, default=7000, help="firmware control port")
@@ -74,7 +77,14 @@ async def main():
     os.makedirs(os.path.join(REPO, "lab", "results"), exist_ok=True)
     qemu = start_qemu(os.path.join(REPO, "lab", "results", "qemu.log")) if a.qemu else None
     ctrl = Ctrl(port=a.ctrl_port)
+    web_ui = None
     try:
+        if a.web:
+            from lab.web.server import WebUI
+            web_ui = WebUI(csms, ctrl, port=a.web_port)
+            await web_ui.start()
+            print(f"[lab] web UI: http://127.0.0.1:{a.web_port}  (Ctrl-C to stop)", flush=True)
+            await asyncio.Event().wait()
         if a.csms:
             await asyncio.Event().wait()
         ids = list(TESTS) if a.all else a.test
@@ -96,6 +106,8 @@ async def main():
             print("\n" + markdown(results))
         return 0 if all(r[2] == "PASS" for r in results) else 1
     finally:
+        if web_ui:
+            await web_ui.stop()
         ctrl.close()
         stop_qemu(qemu)
         await csms.stop()
