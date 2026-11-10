@@ -1,11 +1,70 @@
-# AI usage log
+# AI 사용 내역
 
-Tool: Claude Code (Anthropic, model Claude Opus 5.5), used inside VS Code.
-The owner gave the requirements, the design choices and reviewed each step; the AI wrote code and docs
-and ran the builds/tests. Every entry says what the AI did and what the owner did.
+이 과제는 AI 도구 사용이 허용되어 있으며, 무엇을 어떻게 썼는지 밝히라는 안내에 따라 작성합니다.
+AI가 한 일과 제가 직접 판단한 일을 분리해서 기록합니다.
 
-| Date | Area | What the AI did | What the owner did |
+## 사용한 도구
+| 도구 | 용도 |
+|---|---|
+| Claude (claude.ai 대화, Claude Opus 5.5) | 과제 · 규격 문서 분석, 범위 산정, 설계 논의, 설계 문서 초안, 개발 환경 설치 안내 |
+| Claude Code (VS Code, WSL Ubuntu 22.04, Claude Opus 5.5) | 펌웨어 · 실험실 앱 코드와 문서 작성, 빌드 · 테스트 실행 (작업 내역은 아래 작업 로그에 기록) |
+| pdftotext (poppler-utils) | 규격 PDF를 텍스트로 변환해 필요한 부분만 검색 |
+
+---
+
+## 1. 제가 직접 판단하고 제시한 것
+
+| 항목 | 내용 |
+|---|---|
+| 검증 도구 방향 | 실제 상황처럼 차 · 충전기 · 카드를 웹 화면에 두고, 카드를 드래그해서 대고 케이블을 연결하는 실험실 UI를 만들기로 함. 시험 케이스별 버튼을 눌러 통과 / 실패와 실패 이유를 보여주는 방식도 제가 정함 |
+| 구조 분리 | 웹으로 보여주는 부분(lab)과 실제 펌웨어(QEMU에서 도는 부분)를 분리하도록 요구함 |
+| 작업 방식 | 검증은 가볍게 관련 시험만 돌리되, 실제로 돌려보지 않은 것은 "된다"고 하지 않는 원칙. AI 작업 비용(토큰)을 줄이는 규칙을 하네스에 넣도록 요구함 |
+| 오프라인 대응 방법론 | 1차 면접 질문("인터넷이 끊긴 상태에서 오류를 어떻게 알릴 것인가")에 대한 제 답변에서 출발: 기기가 스스로 기록하고, 같은 건물의 충전기끼리 서로 감시하며, 연결이 돌아오면 알린다 |
+| 자가 진단 방식 | 정해진 바운더리(예시 답안) 안에서 동작하지 않으면 오류로 판단하고 스스로 신호를 내는 방식 → 설정값 범위 검사, 센서 값 범위 검사에 적용 |
+| 노이즈 판단 | 1차 면접 질문(10ms 단위 신호에서 튀는 값 판단)에 대해 충분히 긴 구간을 보고 변화 여부를 판단한다는 답변 → 디바운싱 보너스 항목의 출발점 |
+| 시계 | 서버 기준 시각에서 시간이 흐르는 만큼 더해가는 방식 (초기안의 세계 시각 DB는 AI 검토 후 불필요하다고 판단해 제외) |
+| 부팅 대기(Pending) | 충전기가 먼저 요청하지 않고 서버가 묻는 것에만 응답하는 일방향 방식 |
+| 연결 대기 시간 | 카드 인증 후 케이블 연결 대기 시간 기본값 30초 |
+| 부모 카드 | 카드를 회사별 그룹 코드로 묶는 방식 (그룹 정의는 서버 쪽 테스트 데이터에 둠) |
+| 데이터 기반 설정값 | 테스트 중 발생한 이벤트 시간을 쌓아두고, 평균을 보고 설정값을 정하는 구조를 실험실 앱에 두기로 함 |
+| 충전 중 리셋 | 오프라인 설계에서 채택한 "트랜잭션 기록 + 비휘발 메시지 큐"를 그대로 재사용하기로 함 |
+| 범위 결정 | 기본 기능 → 오프라인 · 정전 · 고장 → 예약 · 로컬 목록 순서로 진행하고, 보안 프로파일은 구현하지 않기로 함. 개발은 제 로컬 환경(WSL + Claude Code)에서 하기로 함 |
+
+## 2. AI가 제안하고 제가 검토 후 채택한 것
+
+| 항목 | AI 제안 | 제 판단 |
+|---|---|---|
+| 플랫폼 | Zephyr RTOS v4.2.0 + QEMU `qemu_x86` (MCU급 환경, 네트워크 · WebSocket 내장) | 채택 |
+| 범위 산정 | 충전기 쪽 시험 106개를 기능별로 묶고 우선순위 · 난이도 산정 | 채택 후 1차 목표 약 50개, 2차 목표 약 76개로 결정 |
+| 3단 방어 구조화 | 제 오프라인 방법론을 "기기 혼자서 / 서버가 보는 신호 / 고장 구분" 3단으로 정리 | 채택 |
+| "정상일 때만 초록불" | 고장 시 빨간불이 아니라, CPU가 주기적으로 신호를 줘야만 상태등이 유지되는 구조. 전원 표시와 상태등 분리 | 채택 |
+| "조용함 자체가 신호" | 하트비트가 끊기는 것 자체를 이상 신호로 사용 | 채택 |
+| 케이블 | 비고정형으로 가정, 고정형 시험은 해당 없음으로 명시 | 채택 |
+| 하네스 | CLAUDE.md에 폴더 구조, 제어 명령, 토큰 절약 · 검증 규칙 정리 | 제 요구사항을 바탕으로 AI가 작성, 검토 후 채택 |
+
+## 3. AI가 규격과 대조해 제 초안을 바로잡은 것
+
+| 제 초안 | 규격 확인 결과 | 반영 |
+|---|---|---|
+| 부팅 대기 중에는 아무 반응도 하지 않음 | 시험 TC_002는 대기 중 설정 조회 · 변경에 응답해야 통과. "반응 안 함"은 Rejected 상태의 규칙 | Pending은 서버 요청에만 응답, Rejected는 무응답으로 분리 |
+| 세계 시각 데이터베이스 연결 | OCPP의 시각은 모두 UTC이고, 서버 응답의 currentTime으로 동기화 가능 | DB 제외, 서버 시각 + 경과 시간 방식 |
+| 연결 대기 30초 고정 | 설정키 ConnectionTimeOut을 시험 도구가 변경함 | 기본값 30초 + 서버 설정 따르기 |
+| 충전기가 회사별 그룹 정의 | 그룹(parentIdTag)은 서버가 알려줌 | 그룹 정의는 서버 테스트 데이터, 펌웨어는 비교만 |
+
+## 4. AI가 작성한 문서 · 자료
+- 과제 · 규격 · 시험 문서 요약과 시험 목록 분류
+- 개발 환경 설치 안내 및 오류 해결 (Zephyr SDK 미설치 문제)
+- 과제 질문 메일 초안
+- `CLAUDE.md`, `docs/DESIGN_resilience.md`, `docs/DESIGN_core.md` 초안 (제 결정사항을 바탕으로 작성, 제가 검토)
+
+---
+
+## 5. 코드 작업 로그 (Claude Code)
+작업 단위로 추가합니다. 설계 판단은 1~3절에 정리했고, 이 표는 실제 코드 작업 기록입니다.
+
+| 날짜 | 영역 | AI가 한 일 | 제가 한 일 |
 |---|---|---|---|
-| 2026-11-10 | Reading | Extracted the two PDFs to text (`pdftotext`) and summarized the MVP test cases; pointed out that TC_013/014 need ChangeAvailability | Chose the MVP scope and test list |
-| 2026-11-10 | Repo skeleton | Wrote `west.yml`, folder layout, this file, `DECISIONS.md` | Chose Zephyr/qemu_x86, T2 layout, no-npm web UI |
-| 2026-11-10 | Firmware step 1 | Wrote prj.conf (e1000 + SLIRP, static IP, shell), Kconfig options, build/run scripts; ran QEMU and checked a TCP connect to the host | Approved the plan |
+| 2026-11-10 | 문서 분석 | 규격 · 시험 PDF 2개를 텍스트로 변환하고 MVP 시험 케이스 요약. TC_013/014(리셋)에 ChangeAvailability 처리가 필요하다는 점을 짚음 | MVP 범위와 시험 목록 결정 |
+| 2026-11-10 | 저장소 뼈대 | `west.yml`, 폴더 구조, `AI_USAGE.md`, `DECISIONS.md` 작성 | Zephyr · qemu_x86, T2 저장소 구조, npm 없는 웹 UI로 결정 |
+| 2026-11-10 | 펌웨어 1단계 | `prj.conf`(e1000 이더넷 + SLIRP 네트워크, 고정 IP, 쉘), Kconfig 옵션, 빌드 · 실행 스크립트 작성. QEMU를 실행해 호스트로 TCP 연결되는 것을 확인 | 계획 검토 후 승인 |
+| 2026-11-10 | 펌웨어 2단계 | 저장소(A/B 슬롯 + CRC), 설정키 표와 검증, 가짜 하드웨어(케이블 · 카드 · 잠금 · 미터 · 전원 · 네트워크 · 센서 범위 검사 · 상태등 alive), UART 쉘과 TCP 제어 포트 작성. 비휘발 저장소 후보(NVMe, qemu_x86_64, noinit RAM)를 직접 시험해 ivshmem으로 결정. 제어 포트가 응답하지 않는 원인(Zephyr e1000 드라이버가 브로드캐스트를 받지 않음)을 gdb와 로그로 찾아 우회. 재부팅 · QEMU 재시작 후 설정 유지 확인 | 저장소 문제로 보드 선택지 중 qemu_x86_64를 고름(이후 AI가 x86_64 네트워크 문제로 qemu_x86 + ivshmem으로 되돌림). `DESIGN_resilience.md` 작성 후 적용 요청. `AI_USAGE.md`를 한국어로 다시 정리 |

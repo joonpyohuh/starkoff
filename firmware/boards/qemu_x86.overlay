@@ -1,0 +1,18 @@
+/*
+ * Persistent storage for the charge point: QEMU "ivshmem-plain" device.
+ * QEMU maps a host file (scripts/run_qemu.sh --disk) into a PCI memory BAR.
+ * The firmware sees it as memory-mapped non-volatile memory (like NOR flash);
+ * every write goes straight into the host file, so data survives a reboot
+ * inside QEMU and restarting QEMU itself.
+ */
+#include <zephyr/dt-bindings/pcie/pcie.h>
+/ {
+	pcie0 {
+		nvmem0: ivshmem0 {
+			compatible = "qemu,ivshmem";
+			vendor-id = <0x1af4>;
+			device-id = <0x1110>;
+			status = "okay";
+		};
+	};
+};
