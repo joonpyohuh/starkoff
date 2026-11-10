@@ -242,3 +242,13 @@ Each entry: what was decided, why, and what was given up. Newest at the bottom.
   따라 달라졌다(TC_036). 시험 시작 전에 TriggerMessage(Heartbeat) → Heartbeat.conf의 진짜 currentTime으로 맞춘다.
 - 심사위원 기준 실행은 README 순서대로 GitHub에서 새로 받아 돌린다(`check_clean_install.sh --all`). 개발 환경의
   결과만으로 "된다"고 하지 않는다.
+
+## D40. Codex 코드 검토와 스타일 통일
+- 검토 범위: Codex가 쓴 펌웨어 전부(auth.c, connector.c · ocpp.c 변경분, store.c, config.c, sim.c)를 규격과 대조.
+  로직 버그는 찾지 못했다. 고친 것 2건: NV 크기 검사에 큐 영역(0x10000~0x20000) 누락, 충전 중이 아닐 때의
+  자정 정렬 미터값까지 오프라인 큐에 쌓던 것(규격 3.7은 거래 메시지만 요구).
+- 한계로 남긴 것: 워치독 재부팅 · QEMU 강제 종료 뒤 살아남은 거래는 종료 사유가 `PowerLoss`로 나간다.
+  원인을 모르는 재부팅에 정확히 맞는 사유가 규격에 없어서다.
+- 모양은 사람이 맞추지 않고 도구로 맞췄다: 펌웨어는 Zephyr 공식 `.clang-format`(+ 함수 사이 빈 줄),
+  실험실은 black(110칸). 모양 커밋과 내용 커밋을 나눴고, 정리 전후 펌웨어의 코드 · 데이터 영역이 바이트 단위로
+  같음을 확인했다(= 동작 변화 없음의 증거). 상태 다이어그램과 설정 표는 `clang-format off`로 보호했다.
