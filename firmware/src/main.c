@@ -10,13 +10,12 @@
 #include "sim/sim.h"
 #include "ctrl/ctrl.h"
 #include "net/link.h"
+#include "ocpp/ocpp.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
 int main(void)
 {
-	struct sim_evt e;
-
 	LOG_INF("STARKOFF charge point firmware starting (Zephyr %s)", KERNEL_VERSION_STRING);
 	store_init();
 	cfg_init();
@@ -25,12 +24,6 @@ int main(void)
 	ctrl_start();
 	link_announce_start();
 
-	/* Step 2 placeholder: the OCPP charger logic will consume these events. */
-	while (1) {
-		sim_alive_kick();
-		if (sim_evt_get(&e, K_MSEC(200)) == 0) {
-			LOG_INF("hw event type=%d conn=%d text=%s", e.type, e.conn, e.text);
-		}
-	}
+	ocpp_run(); /* never returns */
 	return 0;
 }

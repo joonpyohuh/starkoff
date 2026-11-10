@@ -84,3 +84,30 @@ Each entry: what was decided, why, and what was given up. Newest at the bottom.
 - **Decision**: not worked around in firmware (it is a Zephyr TCP property). `scripts/ctl.sh` sends
   commands and waits for each reply; interactive `nc` works. The lab tools keep one connection open.
   OCPP is not affected (the firmware is the WebSocket client and the connection stays open).
+
+## D15. JSON: jsmn (vendored) instead of Zephyr's JSON library
+- **Why**: Zephyr's `json.h` needs a fixed descriptor per message shape; OCPP messages vary a lot
+  (optional fields, arrays of keys). jsmn only tokenizes, allocates nothing, is one header (MIT), and
+  is easy to explain. Writing JSON is a small bounds-checked append helper (`ocpp/json.c`); any overflow
+  becomes a clear CALLERROR / log line instead of a cut message.
+
+## D16. One CALL in flight, FIFO queue, entry removed only on CALLRESULT
+- **Why**: OCPP-J 4.1.1 says not to send a new CALL before the previous one is answered or timed out.
+  Keeping the entry until it is answered means a message lost with a dropped connection is sent again
+  after reconnect. Non-transaction messages (Heartbeat, StatusNotification) are dropped on disconnect;
+  the current status is reported fresh after reconnect instead (DESIGN_resilience 1-4).
+
+## D17. Boot state rules
+- Before any answer to BootNotification, and while Rejected: no requests, and CALLs from the server are
+  not answered (spec 4.2 for Rejected; before registration we treat it the same).
+- Pending: answer the server's CALLs, send no requests of our own, retry Boot after `interval`.
+- `interval` 0 → we wait 30 s. Reconnect without reboot → no new BootNotification.
+
+## D18. Offline detection and back-off
+- Offline = socket closed/failed, or no answer to a CALL within 30 s (then we close and reconnect).
+- Reconnect after 5, 10, 20, 40, then every 60 s (DESIGN_resilience 1-1). Reset to 5 s on success or
+  on `net_up`. Trade-off: a CSMS started late is found within at most 60 s.
+
+## D19. Lab checks with ids X_... are separate from OCTT test cases
+- They check spec / design rules that no OCTT case in our list covers (NotImplemented, reconnect,
+  silence while Rejected). Kept apart so the OCTT results table is not inflated.
