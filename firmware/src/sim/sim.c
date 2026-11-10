@@ -18,7 +18,7 @@ LOG_MODULE_REGISTER(sim, LOG_LEVEL_INF);
 #define NOMINAL_V       230
 #define NOMINAL_TEMP_C  35
 
-/* Safe operating range. Outside it = fault (range check, DESIGN_resilience 3-3). */
+/* Safe operating range. Outside it = fault (range check, docs/DESIGN_resilience.md 3-3). */
 #define MAX_CURRENT_A   40
 #define MAX_VOLTAGE_V   260
 #define MAX_TEMP_C      85

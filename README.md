@@ -165,7 +165,7 @@ nc 127.0.0.1 7000                              # 대화형: 명령을 치면 응
 
 ## 6. 내가 만든 것과 AI 사용
 - **저(작성자)**: 요구사항, 범위와 시험 우선순위, 오프라인 · 정전 · 고장 설계
-  ([DESIGN_resilience.md](DESIGN_resilience.md)), 기본 기능 설계 ([DESIGN_core_v1.md](DESIGN_core_v1.md)),
+  ([docs/DESIGN_resilience.md](docs/DESIGN_resilience.md)), 기본 기능 설계 ([docs/DESIGN_core.md](docs/DESIGN_core.md)),
   설계 결정, 단계마다 검토와 지시.
 - **AI (Claude Code)**: 제 지시에 따라 코드와 문서 대부분을 작성하고, 빌드 · QEMU 테스트를 실행하고,
   문제를 디버깅했습니다. 단계별 기록은 [docs/AI_USAGE.md](docs/AI_USAGE.md)에 있습니다.

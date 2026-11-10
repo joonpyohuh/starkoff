@@ -1,5 +1,5 @@
 /*
- * Wall clock (UTC only, DESIGN_core_v1 section 1).
+ * Wall clock (UTC only, docs/DESIGN_core.md section 1).
  *
  * The charger has no battery-backed RTC. The Central System tells us the time in
  * BootNotification.conf / Heartbeat.conf (currentTime). We remember

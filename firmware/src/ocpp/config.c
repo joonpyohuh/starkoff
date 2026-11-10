@@ -34,7 +34,7 @@ static struct cfg_item items[] = {
 	{ "AllowOfflineTxForUnknownId",        CFG_BOOL, 0,           "false" },
 	{ "AuthorizationCacheEnabled",         CFG_BOOL, 0,           "true" },
 	{ "AuthorizeRemoteTxRequests",         CFG_BOOL, 0,           "true" },
-	{ "BackupPower",                       CFG_BOOL, 0,           "false" }, /* vendor key, see DESIGN_resilience.md */
+	{ "BackupPower",                       CFG_BOOL, 0,           "false" }, /* vendor key, see docs/DESIGN_resilience.md */
 	{ "ClockAlignedDataInterval",          CFG_INT,  0,           "0" },
 	{ "ConnectionTimeOut",                 CFG_INT,  0,           "60" },
 	{ "ConnectorPhaseRotation",            CFG_CSL,  0,           "0.NotApplicable" },
