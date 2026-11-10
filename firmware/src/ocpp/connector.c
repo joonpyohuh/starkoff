@@ -350,8 +350,9 @@ static void write_meter_value(struct jw *w, const struct reading *r, const char 
 			continue;
 		}
 		jw_printf(w,
+			  /* location omitted = "Outlet" (spec 7.43 default): saves room in 1 KB messages */
 			  "%s{\"value\":\"%s\",\"context\":\"%s\",\"format\":\"Raw\","
-			  "\"measurand\":\"%s\",\"location\":\"Outlet\",\"unit\":\"%s\"}",
+			  "\"measurand\":\"%s\",\"unit\":\"%s\"}",
 			  first_sv ? "" : ",", val, context, m, unit);
 		first_sv = false;
 	}
@@ -434,7 +435,7 @@ static void txdata_record(int c, int kind)
 /* Append one sample to w only if it fits (keeping `reserve` bytes free). */
 static bool txdata_append(struct jw *w, const struct txsample *smp, bool first, size_t reserve)
 {
-	static char tmp[512];
+	static char tmp[1024]; /* 4 measurands = ~550 bytes per MeterValue */
 	struct jw t;
 
 	jw_init(&t, tmp, sizeof(tmp));
@@ -449,15 +450,27 @@ static bool txdata_append(struct jw *w, const struct txsample *smp, bool first, 
 	return true;
 }
 
-/* ",\"transactionData\":[...]" with Begin, the ring (oldest first) and End. */
+/* ",\"transactionData\":[...]" with Begin, the ring (oldest first) and End.
+ * End matters most (it closes the transaction), so its room is reserved first;
+ * Begin and the periodic samples take what is left. */
 static void txdata_write(struct jw *w, int c)
 {
 	struct txsample end = { .kind = SK_END };
 	bool first = true, any = txdata[c].has_begin || txdata[c].count || *txdata_keys(SK_END);
-	const size_t reserve = 4; /* "]}" + NUL */
+	size_t reserve = 4; /* "]}" + NUL */
 
 	if (!any) {
 		return;
+	}
+	if (*txdata_keys(SK_END)) {
+		static char endtxt[1024];
+		struct jw t;
+
+		read_now(c, &end.r);
+		jw_init(&t, endtxt, sizeof(endtxt));
+		jw_raw(&t, ",");
+		write_meter_value(&t, &end.r, sk_context[SK_END], txdata_keys(SK_END));
+		reserve += t.pos;
 	}
 	jw_raw(w, ",\"transactionData\":[");
 	if (txdata[c].has_begin && txdata_append(w, &txdata[c].begin, first, reserve)) {
@@ -471,10 +484,7 @@ static void txdata_write(struct jw *w, int c)
 		}
 	}
 	if (*txdata_keys(SK_END)) {
-		read_now(c, &end.r);
-		if (txdata_append(w, &end, first, reserve)) {
-			first = false;
-		}
+		txdata_append(w, &end, first, 4); /* its room was reserved above */
 	}
 	jw_raw(w, "]");
 	memset(&txdata[c], 0, sizeof(txdata[c]));

@@ -221,3 +221,12 @@ Each entry: what was decided, why, and what was given up. Newest at the bottom.
 - 새 시험(`lab/tests/resilience.py`)은 `settings()`로 원래 값을 읽어 두고, 실패해도 끝나면 되돌린다.
   예: TC_037_2가 `StopTransactionOnInvalidId=false`로 둔 채 끝나면 뒤 시험의 결과가 달라진다.
 - 기존 시험(Codex 작성 포함)은 아직 이 방식이 아니다. 회귀 시험 때 순서에 따라 결과가 바뀌는지 볼 것.
+
+## D37. A1 검증에서 배운 것
+- **빌드가 실패하면 시험을 돌리지 않는다.** 한 번은 빌드 실패를 못 보고 이전 펌웨어로 시험을 돌렸다.
+  이후 `build && 경고 없음 && 시험`으로 묶는다.
+- 워치독 재부팅 메시지: Zephyr에서는 printk도 지연 로그를 거친다. 재부팅 직전에는 `LOG_PANIC()`으로 즉시 출력
+  모드로 바꿔야 원인이 남는다. 원인이 안 남는 재부팅은 정전과 구분할 수 없다(설계 3단 "고장 구분").
+- transactionData는 종료 값을 가장 중요하게 본다(거래를 닫는 값). 종료 값 자리를 먼저 잡고 나머지를 채운다.
+  `location`은 기본값(Outlet)이라 생략해서 샘플당 공간을 줄였다.
+- 시험이 너무 느슨하면 버그를 통과시킨다: "샘플 0개"도 통과시키던 조건을 "마지막은 반드시 End"로 고쳤다.

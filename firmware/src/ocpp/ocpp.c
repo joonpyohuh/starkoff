@@ -33,6 +33,7 @@
 #include <zephyr/random/random.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/task_wdt/task_wdt.h>
+#include <zephyr/logging/log_ctrl.h>
 
 LOG_MODULE_REGISTER(ocpp, LOG_LEVEL_INF);
 
@@ -1036,8 +1037,10 @@ static void wdt_expired(int channel_id, void *user_data)
 {
 	ARG_UNUSED(channel_id);
 	ARG_UNUSED(user_data);
-	/* timer context: printk is synchronous, the deferred log would be lost by the reboot */
-	printk("\n*** watchdog: main loop stuck for %d s, rebooting ***\n", WDT_TIMEOUT_MS / 1000);
+	/* The log is deferred (printk too): switch it to synchronous and flush first,
+	 * otherwise the reboot wipes the message and nobody can tell why it rebooted. */
+	LOG_PANIC();
+	LOG_ERR("watchdog: main loop stuck for %d s, rebooting", WDT_TIMEOUT_MS / 1000);
 	sys_reboot(SYS_REBOOT_COLD);
 }
 
