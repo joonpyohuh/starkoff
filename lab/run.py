@@ -20,7 +20,7 @@ import time
 
 from lab.csms.csms import CSMS
 from lab.ctrl import Ctrl
-from lab.tests import core, extra, profiles  # noqa: F401  (registers test cases)
+from lab.tests import core, extra, profiles, resilience  # noqa: F401  (registers test cases)
 from lab.tests.framework import TESTS, run_one
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

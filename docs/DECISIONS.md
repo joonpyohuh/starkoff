@@ -210,3 +210,14 @@ Each entry: what was decided, why, and what was given up. Newest at the bottom.
 - 10 ms마다 신호를 읽어 업다운 카운터(0~16)에 반영. 12 이상이면 꽂힘, 4 이하면 빠짐, 사이는 이전 상태 유지.
 - 처음 생각한 8/6/2는 노이즈 25%에서 가짜 판정 6번 연속(샘플당 (1/4)^6)이 100 Hz로 약 40초에 한 번 나와
   가짜 분리가 생긴다. 16/12/4는 (1/4)^12로 약 5일에 한 번. 대가는 약 120 ms의 인식 지연.
+
+## D35. 설치 절차 검증은 "README에서 직접 뽑아 빈 HOME에서 실행"
+- Docker가 없고 root 권한도 없어서 진짜 새 PC 대신, `env -i` + 빈 `HOME`으로 이 PC의 설정 · 경로 · SDK가
+  섞이지 않게 했다. 명령은 README에서 정규식으로 뽑으므로 README가 틀리면 검증도 실패한다.
+- 섞이지 않았는지는 결과로 확인: CMakeCache의 SDK 경로, QEMU 경로, Zephyr 커밋(`413b789` = v4.2.0).
+- 남은 빈틈: apt 패키지(1.1절). 새 WSL 배포판(`wsl --install -d Ubuntu-22.04`)에서 한 번 더 하면 메울 수 있다.
+
+## D36. 시험이 바꾼 설정은 시험이 끝나면 되돌린다
+- 새 시험(`lab/tests/resilience.py`)은 `settings()`로 원래 값을 읽어 두고, 실패해도 끝나면 되돌린다.
+  예: TC_037_2가 `StopTransactionOnInvalidId=false`로 둔 채 끝나면 뒤 시험의 결과가 달라진다.
+- 기존 시험(Codex 작성 포함)은 아직 이 방식이 아니다. 회귀 시험 때 순서에 따라 결과가 바뀌는지 볼 것.

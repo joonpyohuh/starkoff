@@ -8,7 +8,8 @@ OCPP 1.6J(WebSocket 위의 JSON) 충전기(Charge Point) 펌웨어입니다. **Z
 > **현재 상태 (2026-11-10)**: 기본 충전 로직과 `docs/DESIGN_core.md`의 추가 프로파일
 > (로컬 인증 목록, 예약, RemoteTrigger), 로컬 웹 UI를 구현했습니다. 검증 결과와 한계는
 > [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)에 구분합니다. 공식 OCTT 인증 결과는 아닙니다.
-> 깨끗한 Ubuntu 22.04에서 처음부터 설치하는 절차는 아직 검증하지 않았습니다.
+> 1절 설치 절차는 빈 HOME에서 1.2~1.6절을 처음부터 실행해 확인했습니다(`scripts/check_clean_install.sh`).
+> apt 패키지 설치(1.1절)와 완전히 새 Ubuntu 22.04 PC에서의 확인은 아직 하지 않았습니다.
 
 ---
 
@@ -167,7 +168,7 @@ nc 127.0.0.1 7000                              # 대화형: 명령을 치면 응
 | 오프라인 큐·체크포인트, 정전 복구, 인증 캐시 | 구현 (고정 용량 한계 있음) | TEST_RESULTS.md |
 | 로컬 목록·예약·트리거 메시지·DataTransfer | 구현 | TEST_RESULTS.md |
 | 웹 UI | 구현 | 1.7절, 검증 범위는 TEST_RESULTS.md |
-| 깨끗한 Ubuntu 22.04 절차 (1절) | **아직 검증 안 됨** | 제출 전 예정 |
+| 깨끗한 Ubuntu 22.04 절차 (1절) | 1.2~1.6절 확인함, 1.1절(apt)은 미확인 | `scripts/check_clean_install.sh` (빈 HOME, GitHub에서 clone) |
 
 시험별 결과: [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)
 
