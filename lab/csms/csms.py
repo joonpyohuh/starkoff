@@ -46,12 +46,13 @@ class Event:
 class Responder:
     """How the CSMS answers CALLs from the charge point. Tests may change any field."""
 
+    _tx_ids = itertools.count(1)   # transactionIds keep increasing across tests
+
     def __init__(self):
         self.heartbeat_interval = 300
         # List of (status, interval) for the next BootNotifications; when empty -> Accepted.
         self.boot_script = []
         self.valid_tags = {"TAG001": "Accepted", "TAG002": "Accepted"}
-        self.next_tx_id = 1
         self.overrides = {}   # action -> function(payload) -> response payload
 
     def answer(self, action, payload):
@@ -66,8 +67,7 @@ class Responder:
         if action == "Authorize":
             return {"idTagInfo": {"status": self.valid_tags.get(payload.get("idTag"), "Invalid")}}
         if action == "StartTransaction":
-            tx = self.next_tx_id
-            self.next_tx_id += 1
+            tx = next(Responder._tx_ids)
             return {"transactionId": tx,
                     "idTagInfo": {"status": self.valid_tags.get(payload.get("idTag"), "Invalid")}}
         if action == "StopTransaction":
@@ -86,6 +86,7 @@ class CPConn:
         self.pending = {}            # our CALL id -> Future
         self.ids = itertools.count(1)
         self.closed = asyncio.Event()
+        self.reply_index = {}        # our CALL id -> index of its answer in CSMS.events
 
     async def call(self, action, payload, timeout=15):
         """Send a CALL to the charge point, return its CALLRESULT payload.
@@ -94,6 +95,7 @@ class CPConn:
         fut = asyncio.get_running_loop().create_future()
         self.pending[mid] = fut
         await self.csms._send(self, [2, mid, action, payload])
+        self.last_call_id = mid
         try:
             return await asyncio.wait_for(fut, timeout)
         finally:
@@ -187,6 +189,7 @@ class CSMS:
                     if payload is not None:   # None = do not answer (tests of timeouts)
                         await self._send(conn, [3, ev.id, payload])
                 elif ev.type in (3, 4) and ev.id in conn.pending:
+                    conn.reply_index[ev.id] = len(self.events) - 1
                     fut = conn.pending[ev.id]
                     if not fut.done():
                         if ev.type == 3:

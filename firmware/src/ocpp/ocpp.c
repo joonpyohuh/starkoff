@@ -60,8 +60,11 @@ static enum cp_status reported[CONN_MAX + 1];
 
 struct out_msg {
 	char action[32];
-	char payload[OUT_PAYLOAD_MAX];
-	bool tx_related;   /* transaction message: kept across reconnects (step 4) */
+	char payload[OUT_PAYLOAD_MAX]; /* may contain %TX% = real transactionId, filled at send */
+	bool tx_related;   /* transaction message: kept across reconnects */
+	int conn;          /* connector the message belongs to (answer routing) */
+	char tag[21];      /* idTag, for Authorize answers */
+	int tx_local;      /* local transaction number (connector.c) */
 };
 static struct out_msg outq[OUTQ_LEN];
 static int outq_head, outq_count;
@@ -72,13 +75,23 @@ static struct {
 	char id[40];
 	char action[32];
 	int64_t sent_at;
+	int conn;
+	char tag[21];
+	int tx_local;
 } inflight;
+
+/* Reset requested by the Central System: reboot once the queue is sent (or at the deadline). */
+static struct {
+	bool pending;
+	int64_t deadline;
+} reset_req;
 
 static uint32_t msg_counter;
 static uint32_t msg_prefix;
 static char rxbuf[RX_MAX];
 static char txbuf[TX_MAX];
 static char paybuf[OUT_PAYLOAD_MAX];
+static char sendbuf[OUT_PAYLOAD_MAX + 16];
 static struct jp jp;
 
 static const char *boot_str(enum boot_state b)
@@ -159,9 +172,20 @@ static void send_error(const char *id, const char *code, const char *desc)
 	}
 }
 
+bool ocpp_online(void)
+{
+	return ws_is_up() && boot == BOOT_ACCEPTED;
+}
+
 /* ---------------- outgoing queue ---------------- */
 
 int ocpp_enqueue(const char *action, const char *payload, bool tx_related)
+{
+	return ocpp_enqueue_ex(action, payload, tx_related, 0, NULL, 0);
+}
+
+int ocpp_enqueue_ex(const char *action, const char *payload, bool tx_related, int conn,
+		    const char *tag, int tx_local)
 {
 	struct out_msg *m;
 
@@ -178,6 +202,10 @@ int ocpp_enqueue(const char *action, const char *payload, bool tx_related)
 	m->action[sizeof(m->action) - 1] = '\0';
 	strcpy(m->payload, payload);
 	m->tx_related = tx_related;
+	m->conn = conn;
+	strncpy(m->tag, tag ? tag : "", sizeof(m->tag) - 1);
+	m->tag[sizeof(m->tag) - 1] = '\0';
+	m->tx_local = tx_local;
 	outq_count++;
 	return 0;
 }
@@ -236,6 +264,9 @@ static void send_boot(void)
 	jw_kv_str(&w, &first, "firmwareVersion", FW_VERSION);
 	jw_raw(&w, "}");
 	boot = BOOT_SENT;
+	inflight.conn = 0;
+	inflight.tag[0] = '\0';
+	inflight.tx_local = 0;
 	send_call("BootNotification", paybuf, false);
 }
 
@@ -370,6 +401,99 @@ static void h_change_configuration(const char *id, int pl)
 	}
 }
 
+static void reply_status(const char *id, const char *status)
+{
+	snprintf(paybuf, sizeof(paybuf), "{\"status\":\"%s\"}", status);
+	send_result(id, paybuf);
+}
+
+static void h_remote_start(const char *id, int pl)
+{
+	char tag[21];
+	int c = 0;
+
+	if (!jp_get_str(&jp, pl, "idTag", tag, sizeof(tag))) {
+		send_error(id, "FormationViolation", "idTag (string, max 20) is required");
+		return;
+	}
+	if (jp_get(&jp, pl, "connectorId") >= 0 && !jp_get_int(&jp, pl, "connectorId", &c)) {
+		send_error(id, "TypeConstraintViolation", "connectorId must be an integer");
+		return;
+	}
+	bool given = jp_get(&jp, pl, "connectorId") >= 0;
+
+	/* Pending (spec 4.2), connectorId 0 or a connector we do not have (DESIGN_core 6/8): Rejected */
+	if (boot != BOOT_ACCEPTED || (given && (c < 1 || c > CONN_MAX))) {
+		reply_status(id, "Rejected");
+		return;
+	}
+	if (!given) {
+		c = 1; /* no connectorId: we choose (first connector) */
+	}
+	/* The .conf is sent now; Authorize/StartTransaction are queued and follow it. */
+	reply_status(id, conn_remote_start(c, tag) ? "Accepted" : "Rejected");
+}
+
+static void h_remote_stop(const char *id, int pl)
+{
+	int tx;
+
+	if (!jp_get_int(&jp, pl, "transactionId", &tx)) {
+		send_error(id, "FormationViolation", "transactionId (integer) is required");
+		return;
+	}
+	reply_status(id, boot == BOOT_ACCEPTED && conn_remote_stop(tx) ? "Accepted" : "Rejected");
+}
+
+static void h_change_availability(const char *id, int pl)
+{
+	char type[16];
+	int c;
+	static const char *const res[] = { "Accepted", "Rejected", "Scheduled" };
+
+	if (!jp_get_int(&jp, pl, "connectorId", &c) ||
+	    !jp_get_str(&jp, pl, "type", type, sizeof(type))) {
+		send_error(id, "FormationViolation", "connectorId and type are required");
+		return;
+	}
+	if (strcmp(type, "Operative") != 0 && strcmp(type, "Inoperative") != 0) {
+		send_error(id, "PropertyConstraintViolation", "type must be Operative or Inoperative");
+		return;
+	}
+	reply_status(id, res[conn_change_availability(c, strcmp(type, "Operative") == 0)]);
+}
+
+static void h_reset(const char *id, int pl)
+{
+	char type[8];
+	bool hard;
+
+	if (!jp_get_str(&jp, pl, "type", type, sizeof(type)) ||
+	    (strcmp(type, "Hard") != 0 && strcmp(type, "Soft") != 0)) {
+		send_error(id, "FormationViolation", "type must be Hard or Soft");
+		return;
+	}
+	hard = strcmp(type, "Hard") == 0;
+	reply_status(id, "Accepted");
+	/* Stop transactions first (reason HardReset / SoftReset), then reboot when the
+	 * StopTransaction is delivered. Hard: at most 5 s, Soft: at most 30 s. */
+	conn_stop_all(hard ? "HardReset" : "SoftReset");
+	reset_req.pending = true;
+	reset_req.deadline = k_uptime_get() + (hard ? 5000 : 30000);
+	LOG_WRN("%s reset requested", type);
+}
+
+static void h_unlock(const char *id, int pl)
+{
+	int c;
+
+	if (!jp_get_int(&jp, pl, "connectorId", &c)) {
+		send_error(id, "FormationViolation", "connectorId (integer) is required");
+		return;
+	}
+	reply_status(id, conn_unlock(c));
+}
+
 struct call_handler {
 	const char *action;
 	void (*fn)(const char *id, int payload_tok);
@@ -378,6 +502,11 @@ struct call_handler {
 static const struct call_handler handlers[] = {
 	{ "GetConfiguration", h_get_configuration },
 	{ "ChangeConfiguration", h_change_configuration },
+	{ "RemoteStartTransaction", h_remote_start },
+	{ "RemoteStopTransaction", h_remote_stop },
+	{ "ChangeAvailability", h_change_availability },
+	{ "Reset", h_reset },
+	{ "UnlockConnector", h_unlock },
 };
 
 static void handle_call(const char *id, const char *action, int pl)
@@ -447,6 +576,19 @@ static void handle_result(const char *id, int pl)
 	}
 	if (strcmp(inflight.action, "BootNotification") == 0) {
 		on_boot_conf(pl);
+	} else if (strcmp(inflight.action, "Authorize") == 0 ||
+		   strcmp(inflight.action, "StartTransaction") == 0) {
+		char status[24] = "Invalid";
+		int info = jp_get(&jp, pl, "idTagInfo");
+		int tx = -1;
+
+		jp_get_str(&jp, info, "status", status, sizeof(status));
+		if (inflight.action[0] == 'A') {
+			conn_on_authorize_conf(inflight.conn, inflight.tag, status);
+		} else {
+			jp_get_int(&jp, pl, "transactionId", &tx);
+			conn_on_start_conf(inflight.tx_local, tx, status);
+		}
 	} else if (strcmp(inflight.action, "Heartbeat") == 0) {
 		char ts[40];
 
@@ -471,7 +613,8 @@ static void handle_error(const char *id, int code_tok)
 		boot_retry_at = k_uptime_get() + BOOT_RETRY_DEFAULT * 1000;
 		return;
 	}
-	/* Non-transaction messages are not retried. Transaction messages: step 4. */
+	/* Not retried yet (TransactionMessageAttempts comes with the resilience step). */
+	conn_on_call_failed(inflight.action, inflight.conn, inflight.tx_local);
 	if (inflight.from_queue) {
 		outq_pop();
 	}
@@ -582,8 +725,8 @@ static void handle_hw_event(const struct sim_evt *e)
 		backoff_s = BACKOFF_MIN_S;
 		break;
 	default:
-		/* plug/card/fault: status is re-evaluated below; transactions in step 4 */
 		LOG_INF("hw event %d on connector %d %s", e->type, e->conn, e->text);
+		conn_on_hw(e);
 		break;
 	}
 }
@@ -634,8 +777,25 @@ static void send_next(void)
 		return;
 	}
 	struct out_msg *m = &outq[outq_head];
+	const char *ph = strstr(m->payload, "%TX%");
 
-	send_call(m->action, m->payload, true);
+	if (ph) {
+		int real = conn_tx_real_id(m->tx_local);
+
+		if (real < 0) {
+			/* StartTransaction was refused with CALLERROR: no transactionId exists */
+			LOG_ERR("%s for transaction #%d has no transactionId, dropped", m->action,
+				m->tx_local);
+			outq_pop();
+			return;
+		}
+		snprintf(sendbuf, sizeof(sendbuf), "%.*s%d%s", (int)(ph - m->payload), m->payload,
+			 real, ph + 4);
+	}
+	inflight.conn = m->conn;
+	strcpy(inflight.tag, m->tag);
+	inflight.tx_local = m->tx_local;
+	send_call(m->action, ph ? sendbuf : m->payload, true);
 }
 
 static size_t status_hook(char *buf, size_t len)
@@ -648,7 +808,7 @@ static size_t status_hook(char *buf, size_t len)
 		     boot_str(boot), ws_is_up() ? "up" : "down", ts,
 		     clock_valid() ? "" : "(unsynced)", outq_count);
 	for (int c = 1; c <= CONN_MAX && n < len; c++) {
-		n += snprintf(buf + n, len - n, " c%d.status=%s", c, conn_status_str(conn_status(c)));
+		n += conn_status_append(c, buf + n, len - n);
 	}
 	return MIN(n, len);
 }
@@ -687,7 +847,14 @@ void ocpp_run(void)
 			continue;
 		}
 		timers();
+		conn_tick();
 		report_status_changes();
 		send_next();
+		if (reset_req.pending &&
+		    ((outq_count == 0 && !inflight.active) || k_uptime_get() > reset_req.deadline)) {
+			LOG_WRN("rebooting for Reset (%d messages left in queue)", outq_count);
+			k_msleep(200);
+			sys_reboot(SYS_REBOOT_COLD);
+		}
 	}
 }

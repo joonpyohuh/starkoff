@@ -35,6 +35,7 @@ struct cfg_item {
 #define CFG_SERVER_URL  "_ServerUrl"
 #define CFG_CP_ID       "_ChargePointId"
 #define CFG_BUILD_TAG   "_BuildDefaults"
+#define CFG_INOPERATIVE "_Inoperative"
 
 void cfg_init(void);
 const char *cfg_get(const char *key);       /* NULL if unknown */

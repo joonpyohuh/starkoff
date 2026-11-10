@@ -15,3 +15,8 @@ void ocpp_run(void);
 enum boot_state ocpp_boot_state(void);
 /* Queue a CALL. tx_related = transaction message (kept across reconnects). */
 int ocpp_enqueue(const char *action, const char *payload, bool tx_related);
+/* Same, with routing info for the answer (connector, idTag, local transaction number). */
+int ocpp_enqueue_ex(const char *action, const char *payload, bool tx_related, int conn,
+		    const char *tag, int tx_local);
+/* Connected and BootNotification Accepted. */
+bool ocpp_online(void);

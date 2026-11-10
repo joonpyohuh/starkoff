@@ -97,6 +97,25 @@ class Ctx:
             self.fail(step, f"expected no {'/'.join(actions)} for {duration} s, "
                             f"but got {ev.raw}")
 
+    def response_to(self, ev):
+        """The CSMS's CALLRESULT payload for a CALL event from the charge point."""
+        for e in self.csms.events:
+            if e.direction == "cs->cp" and e.type == 3 and e.id == ev.id:
+                return e.msg[2]
+        return None
+
+    async def expect_unordered(self, step, specs, timeout=15):
+        """Several messages that 'may be reversed'. specs: list of (action, where, check).
+        Returns the events in the order of specs."""
+        start, out, end = self.mark, [], self.mark
+        for action, where, check in specs:
+            self.mark = start
+            ev = await self.expect(action, step, timeout, check=check, where=where)
+            out.append(ev)
+            end = max(end, self.mark)
+        self.mark = end
+        return out
+
     async def call(self, action, payload, step, timeout=15):
         conn = self.conn()
         try:
@@ -105,7 +124,10 @@ class Ctx:
             self.fail(step, f"no {action}.conf within {timeout} s")
         except CallError as e:
             self.fail(step, f"{action} answered with CALLERROR {e}")
-        self.mark = len(self.csms.events)
+        # Messages the CP sends right after its answer must still be visible to expect():
+        # continue just after the answer, not at the end of the list.
+        idx = conn.reply_index.pop(conn.last_call_id, len(self.csms.events) - 1)
+        self.mark = idx + 1
         return res
 
     def conn(self):
@@ -138,14 +160,32 @@ class Ctx:
         raise TestFail(f"precondition: charge point not ready (status: {last})")
 
     async def reset_cp_state(self):
-        """Bring the charge point back to the general preconditions."""
+        """Bring the charge point back to the general preconditions (OCTT 1.3):
+        no faults, no transaction, no authorization, connectors operative, cable out."""
+        await self.ctrl.cmd("net_up")
+        await self.ctrl.cmd("power on")
         for c in range(1, 2):
             await self.ctrl.cmd(f"fault {c} off")
             await self.ctrl.cmd(f"lock_fail {c} off")
             st = await self.ctrl.status()
+            if st.get(f"c{c}.tx", "-1") != "-1" and self.csms.conns:
+                try:
+                    await self.conn().call("RemoteStopTransaction",
+                                           {"transactionId": int(st[f"c{c}.tx"])}, 10)
+                except Exception:
+                    pass
+                await asyncio.sleep(1)
+            st = await self.ctrl.status()
+            if st.get(f"c{c}.tag", "-") != "-" and st.get(f"c{c}.tx", "-1") == "-1":
+                await self.ctrl.cmd(f"card {c} {st[f'c{c}.tag']}")   # same card cancels
+            if st.get(f"c{c}.status") == "Unavailable" and self.csms.conns:
+                try:
+                    await self.conn().call("ChangeAvailability",
+                                           {"connectorId": 0, "type": "Operative"}, 10)
+                except Exception:
+                    pass
             if st.get(f"c{c}.cable") == "1":
                 await self.ctrl.cmd(f"unplug {c}")
-        await self.ctrl.cmd("net_up")
 
 
 async def run_one(tc_id, csms, ctrl, cfg=None):

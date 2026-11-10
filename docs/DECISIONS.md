@@ -123,3 +123,29 @@ Each entry: what was decided, why, and what was given up. Newest at the bottom.
   (`outq_drop_non_tx`). 고친 뒤 스택 사용량을 스레드별로 측정.
 - **결정**: 큐는 제자리에서 압축(임시 복사본 없음), 큰 버퍼는 static, 워크큐 2 KB · 쉘 4 KB.
   **스택 보호는 제출 빌드에서도 켜 둔다.** 넘치면 조용히 메모리를 망가뜨리는 대신 바로 멈추고 위치를 알려줌.
+
+## D21. 충전 세션 상태 머신과 transactionId 자리표시자(%TX%)
+- 커넥터마다 IDLE → AUTHORIZED → CHARGING → FINISHING. OCPP 상태(7.7)는 이 단계와 하드웨어 상태로 계산
+  (Faulted > Charging/SuspendedEV/SuspendedEVSE > Finishing > Preparing > Unavailable > Available).
+- StartTransaction에는 내부 번호(tx_local)를 붙이고, 진짜 transactionId가 필요한 MeterValues · StopTransaction은
+  `%TX%`를 넣어 큐에 넣는다. 보낼 때 실제 번호로 바꾼다. 큐는 순서대로 하나씩 나가므로 그때는 이미
+  StartTransaction.conf가 와 있다. 오프라인 트랜잭션(6단계)도 같은 방식으로 처리할 수 있다.
+- **왜**: StartTransaction 응답을 기다리느라 충전을 멈추지 않아도 되고, 응답이 늦어도 메시지 순서가 지켜진다.
+
+## D22. 가용성(ChangeAvailability)은 숨은 설정 키 `_Inoperative`에 저장
+- TC_013은 Hard Reset 뒤에도 커넥터가 Unavailable로 부팅되는지 본다. 이미 비휘발로 저장되는 설정 표를
+  재사용해서 저장 코드를 따로 만들지 않았다. 충전 중 Inoperative 요청은 Scheduled로 답하고 끝나면 적용.
+
+## D23. Reset은 "트랜잭션 종료 → 큐 전송 → 재부팅"
+- Reset.conf(Accepted)를 먼저 보내고, 진행 중 트랜잭션을 reason=HardReset/SoftReset으로 끝낸 뒤 큐가 비면
+  재부팅한다. 큐가 안 비어도 Hard는 5초, Soft는 30초 뒤에는 재부팅한다. (큐 비휘발 저장은 6단계)
+
+## D24. RemoteStart 거절 조건 (DESIGN_core 8절)
+- Pending 상태, connectorId 0, 없는 커넥터 번호, 이미 사용 중 · 인증 대기 중, Faulted, Unavailable이면 Rejected.
+  connectorId가 없으면 1번을 고른다. 처음 구현에서 없는 번호(예: 5)를 1번으로 바꿔 Accepted하던 버그를
+  코드 검토 중 발견해 고쳤다.
+
+## D25. 시험 도구 버그: CSMS 요청 직후 온 메시지를 놓치던 문제
+- TC_012가 실패했는데 펌웨어는 정상이었다. 시험 도구가 RemoteStop 응답을 받은 뒤 "본 위치"를 이벤트 목록
+  끝으로 옮겨서, 응답 직후 도착한 StopTransaction을 건너뛰었다. 응답 이벤트 바로 다음으로 옮기도록 고쳤다.
+- 같이 고친 것: 가짜 CSMS가 시험마다 transactionId를 1부터 다시 줘서 로그가 헷갈렸다. 이제 계속 증가.

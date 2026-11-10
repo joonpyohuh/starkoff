@@ -60,6 +60,8 @@ static struct cfg_item items[] = {
 	{ CFG_SERVER_URL,                      CFG_STR,  CFG_HIDDEN,  CONFIG_OCPP_SERVER_URL },
 	{ CFG_CP_ID,                           CFG_STR,  CFG_HIDDEN,  CONFIG_OCPP_CHARGE_POINT_ID },
 	{ CFG_BUILD_TAG,                       CFG_STR,  CFG_HIDDEN,  "" },
+	/* connectors set Inoperative by ChangeAvailability, e.g. "0,1"; persists across reboot (TC_013) */
+	{ CFG_INOPERATIVE,                     CFG_STR,  CFG_HIDDEN,  "" },
 };
 
 static K_MUTEX_DEFINE(cfg_lock);
