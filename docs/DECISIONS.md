@@ -32,3 +32,12 @@ Each entry: what was decided, why, and what was given up. Newest at the bottom.
 ## D6. Mock CSMS can script its responses per test
 - **Why**: TC_001_CS first answers BootNotification with `Rejected`, then `Accepted`. The CSMS must be
   able to change answers per test, otherwise the retry path is never exercised.
+
+## D7. Static IP 10.0.2.15 instead of DHCP
+- **Why**: SLIRP always gives the guest 10.0.2.15, so a static address is the same result without waiting
+  for DHCP on every boot (faster, fewer moving parts in the boot test). DNS server is SLIRP's 10.0.2.3,
+  so a hostname in the server URL also works.
+
+## D8. Default server URL / CP ID are Kconfig options, set by `scripts/build.sh --url --id`
+- **Why**: A build-time default is the one path that works on any machine, with no storage involved.
+  Runtime change via the shell is added on top (see later decisions).

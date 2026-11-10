@@ -1,0 +1,24 @@
+# Application options. Change at build time with:
+#   scripts/build.sh --url ws://10.0.2.2:9000/ocpp --id CP001
+menu "STARKOFF OCPP Charge Point"
+
+config OCPP_SERVER_URL
+	string "Default Central System base URL (Charge Point ID is appended)"
+	default "ws://10.0.2.2:9000/ocpp"
+
+config OCPP_CHARGE_POINT_ID
+	string "Default Charge Point ID"
+	default "CP001"
+
+config OCPP_NUM_CONNECTORS
+	int "Number of connectors"
+	default 1
+	range 1 4
+
+config CTRL_TCP_PORT
+	int "TCP control port for the simulated hardware"
+	default 7000
+
+endmenu
+
+source "Kconfig.zephyr"
