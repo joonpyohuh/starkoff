@@ -111,3 +111,15 @@ Each entry: what was decided, why, and what was given up. Newest at the bottom.
 ## D19. Lab checks with ids X_... are separate from OCTT test cases
 - They check spec / design rules that no OCTT case in our list covers (NotImplemented, reconnect,
   silence while Rejected). Kept apart so the OCTT results table is not inflated.
+
+## D20. 스택 넘침 버그 2건과 스택 보호 상시 켜기 (이후 기록은 한국어)
+- **현상**: 첫 서버 접속 시도를 부팅 2초 뒤로 옮기자 `zsock_socket()` 안의 `errno = 0`에서 page fault.
+  `errno`가 있는 스레드 로컬 영역 포인터가 망가진 상태였음.
+- **원인 1**: `outq_drop_non_tx()`가 큐 전체 복사본(약 17 KB)을 8 KB 스택에 잡음. 연결이 끊길 때마다
+  실행되므로, 이전에 "통과"한 실행에서도 스택 아래 메모리를 조용히 덮어쓰고 있었음.
+- **원인 2**: `kernel thread stacks`로 재 보니 시스템 워크큐가 1052바이트를 사용. 원래 크기 1024바이트라
+  여기도 넘치고 있었음 (`link.c`의 소켓 호출과 미터 계산이 워크큐에서 돎).
+- **찾은 방법**: `CONFIG_HW_STACK_PROTECTION`을 켠 빌드로 재현 → "Stack overflow" + 호출 위치
+  (`outq_drop_non_tx`). 고친 뒤 스택 사용량을 스레드별로 측정.
+- **결정**: 큐는 제자리에서 압축(임시 복사본 없음), 큰 버퍼는 static, 워크큐 2 KB · 쉘 4 KB.
+  **스택 보호는 제출 빌드에서도 켜 둔다.** 넘치면 조용히 메모리를 망가뜨리는 대신 바로 멈추고 위치를 알려줌.

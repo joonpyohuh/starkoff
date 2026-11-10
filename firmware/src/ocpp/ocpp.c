@@ -51,7 +51,9 @@ LOG_MODULE_REGISTER(ocpp, LOG_LEVEL_INF);
 static enum boot_state boot = BOOT_NOT_SENT;
 static int64_t boot_retry_at;      /* uptime ms: earliest next BootNotification */
 static int64_t next_hb_at;         /* uptime ms: next Heartbeat */
-static int64_t next_connect_at;
+/* First attempt ~2 s after boot: by then QEMU's NAT has learned our MAC (link.c),
+ * so the first SYN is answered instead of being retransmitted for several seconds. */
+static int64_t next_connect_at = 2000;
 static int backoff_s = BACKOFF_MIN_S;
 static bool dead;                  /* power is off: charger logic stopped */
 static enum cp_status reported[CONN_MAX + 1];
@@ -198,21 +200,24 @@ static void outq_pop(void)
 	}
 }
 
-/* After a disconnect: keep only transaction messages (they must be delivered). */
+/* After a disconnect: keep only transaction messages (they must be delivered).
+ * Compacts the ring in place (no temporary copy: a copy of the queue would be
+ * ~17 KB, far more than the thread stack). */
 static void outq_drop_non_tx(void)
 {
-	struct out_msg keep[OUTQ_LEN];
 	int n = 0;
 
 	for (int i = 0; i < outq_count; i++) {
-		struct out_msg *m = &outq[(outq_head + i) % OUTQ_LEN];
+		int from = (outq_head + i) % OUTQ_LEN;
+		int to = (outq_head + n) % OUTQ_LEN;
 
-		if (m->tx_related) {
-			keep[n++] = *m;
+		if (outq[from].tx_related) {
+			if (from != to) {
+				outq[to] = outq[from];
+			}
+			n++;
 		}
 	}
-	memcpy(outq, keep, sizeof(keep[0]) * n);
-	outq_head = 0;
 	outq_count = n;
 }
 
@@ -294,7 +299,7 @@ static void h_get_configuration(const char *id, int pl)
 	struct jw w;
 	int keys = jp_get(&jp, pl, "key");
 	bool first = true, first_unknown = true;
-	char unknown[OUT_PAYLOAD_MAX] = "";
+	static char unknown[OUT_PAYLOAD_MAX];
 	struct jw wu;
 
 	jw_init(&w, cfg_resp, sizeof(cfg_resp));
