@@ -76,3 +76,11 @@ Each entry: what was decided, why, and what was given up. Newest at the bottom.
 ## D13. Readonly keys are readonly for everyone
 - Even the local shell cannot change `GetConfigurationMaxKeys`, `NumberOfConnectors`,
   `SupportedFeatureProfiles`; their values always come from the build.
+
+## D14. Control port clients must not half-close; `scripts/ctl.sh` provided
+- **Finding**: `printf 'status\n' | nc -q 1 ...` got no reply. Debug log: `recv` got the data, then
+  `send` failed with `ENOTCONN` (errno 128). The client's FIN arrived with the data, and Zephyr's TCP
+  does not support half-close, so the connection is gone before we can answer.
+- **Decision**: not worked around in firmware (it is a Zephyr TCP property). `scripts/ctl.sh` sends
+  commands and waits for each reply; interactive `nc` works. The lab tools keep one connection open.
+  OCPP is not affected (the firmware is the WebSocket client and the connection stays open).

@@ -91,13 +91,15 @@ Same commands on the UART shell (prefix `cp `) and on TCP port 7000 (one line in
 | `cfg get <k>` / `cfg set <k> <v>` / `cfg list` / `cfg reset` | configuration keys |
 | `reboot` | reboot the firmware |
 
-Example:
+Examples:
 ```bash
-nc 127.0.0.1 7000
-plug 1
-card 1 TAG001
-status
+scripts/ctl.sh status                          # one-shot, prints each reply
+scripts/ctl.sh "plug 1" "card 1 TAG001" status
+
+nc 127.0.0.1 7000                              # interactive: type a command, get a reply
 ```
+Do **not** use `nc -q`/`nc -N` or `echo cmd | nc ...`: they half-close the connection, and Zephyr's TCP
+then drops the replies (Zephyr does not support TCP half-close).
 
 ---
 
