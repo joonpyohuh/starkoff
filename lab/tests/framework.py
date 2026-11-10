@@ -196,10 +196,15 @@ class Ctx:
                 break
             await asyncio.sleep(0.25)
         if self.csms.conns:
-            for ident in (10, 11, 100):
-                await self.conn().call("CancelReservation", {"reservationId": ident}, 5)
-            await self.conn().call("SendLocalList", {"listVersion": 1, "updateType": "Full"}, 5)
-            await self.conn().call("ClearCache", {}, 5)
+            # 15 s, not 5 s: the e1000 driver drops a frame when two arrive back to back and
+            # TCP resends after 1, 2, 4 s (README 5). The firmware answers at once; the network is late.
+            calls = [("CancelReservation", {"reservationId": i}) for i in (10, 11, 100)]
+            calls += [("SendLocalList", {"listVersion": 1, "updateType": "Full"}), ("ClearCache", {})]
+            for action, payload in calls:
+                try:
+                    await self.conn().call(action, payload, 15)
+                except asyncio.TimeoutError:
+                    raise TestFail(f"precondition: no answer to {action} within 15 s while resetting the CP")
         for key, value in {
             "LocalPreAuthorize": "false",
             "LocalAuthorizeOffline": "true",
@@ -258,7 +263,11 @@ async def run_one(tc_id, csms, ctrl, cfg=None):
         return "FAIL", str(e), time.monotonic() - t0
     except NotApplicable as e:
         return "N/A", str(e), time.monotonic() - t0
-    except Exception as e:  # bug in the test or the lab
-        return "ERROR", f"{type(e).__name__}: {e}", time.monotonic() - t0
+    except Exception as e:  # bug in the test or the lab: say where, or nobody can fix it
+        import traceback
+
+        where = traceback.extract_tb(e.__traceback__)
+        frames = [f"{f.filename.split('/')[-1]}:{f.lineno} {f.name}" for f in where[-3:]]
+        return "ERROR", f"{type(e).__name__}: {e} at " + " <- ".join(reversed(frames)), time.monotonic() - t0
     finally:
         csms.responder = Responder()
