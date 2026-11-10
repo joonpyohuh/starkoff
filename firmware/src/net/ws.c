@@ -93,9 +93,9 @@ static void close_all(void)
 int ws_connect(const char *url, const char *cp_id)
 {
 	struct ws_url u;
-	struct zsock_addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_STREAM };
+	struct zsock_addrinfo hints = {.ai_family = AF_INET, .ai_socktype = SOCK_STREAM};
 	struct zsock_addrinfo *res = NULL;
-	struct websocket_request req = { 0 };
+	struct websocket_request req = {0};
 	int rc;
 
 	close_all();
@@ -160,8 +160,8 @@ int ws_send_text(const char *msg, size_t len)
 	if (ws_fd < 0) {
 		return -ENOTCONN;
 	}
-	rc = websocket_send_msg(ws_fd, (const uint8_t *)msg, len, WEBSOCKET_OPCODE_DATA_TEXT,
-				true, true, 2000);
+	rc = websocket_send_msg(ws_fd, (const uint8_t *)msg, len, WEBSOCKET_OPCODE_DATA_TEXT, true,
+				true, 2000);
 	if (rc < 0) {
 		LOG_WRN("send failed (%d)", rc);
 		ws_close();

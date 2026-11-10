@@ -4,7 +4,7 @@
 
 enum boot_state {
 	BOOT_NOT_SENT,
-	BOOT_SENT,      /* waiting for BootNotification.conf */
+	BOOT_SENT, /* waiting for BootNotification.conf */
 	BOOT_ACCEPTED,
 	BOOT_PENDING,
 	BOOT_REJECTED,

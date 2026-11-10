@@ -35,17 +35,22 @@
 
 LOG_MODULE_REGISTER(conn, LOG_LEVEL_INF);
 
-#define TAG_LEN (SIM_TAG_MAX + 1)
+#define TAG_LEN   (SIM_TAG_MAX + 1)
 #define TXMAP_LEN 16
 
-enum phase { PH_IDLE, PH_AUTHORIZED, PH_CHARGING, PH_FINISHING };
+enum phase {
+	PH_IDLE,
+	PH_AUTHORIZED,
+	PH_CHARGING,
+	PH_FINISHING
+};
 
 struct conn {
 	enum phase phase;
 	char auth_tag[TAG_LEN]; /* authorized, waiting for cable */
-	int64_t auth_at;	/* uptime ms of authorization (ConnectionTimeOut) */
-	bool authorizing;	/* Authorize.req in flight for this connector */
-	bool remote_pending;	/* RemoteStart accepted, waiting for Authorize.conf */
+	int64_t auth_at;        /* uptime ms of authorization (ConnectionTimeOut) */
+	bool authorizing;       /* Authorize.req in flight for this connector */
+	bool remote_pending;    /* RemoteStart accepted, waiting for Authorize.conf */
 	char pending_tag[TAG_LEN];
 	int tx_local; /* local transaction number, 0 = none */
 	char tx_tag[TAG_LEN];
@@ -60,6 +65,7 @@ struct conn {
 
 static struct conn conns[CONN_MAX + 1];
 static int next_tx_local = 1;
+
 static struct reservation {
 	bool active;
 	int id;
@@ -71,36 +77,43 @@ static struct k_timer reservation_timer;
 static volatile bool reservation_due;
 static int64_t aligned_next;
 static int aligned_interval;
+
 static void reservation_expired(struct k_timer *timer)
 {
 	ARG_UNUSED(timer);
 	reservation_due = true;
 }
+
 static void reservation_save(void)
 {
 	store_save(STORE_REC_RESERVATION, &reservation, sizeof(reservation));
 }
+
 static void reservation_clear(void)
 {
 	reservation.active = false;
 	k_timer_stop(&reservation_timer);
 	reservation_save();
 }
+
 void conn_clock_changed(void)
 {
 	if (reservation.active && clock_valid()) {
 		int64_t left = reservation.expiry - clock_now();
-		if (left <= 0)
+		if (left <= 0) {
 			reservation_due = true;
-		else
+		} else {
 			k_timer_start(&reservation_timer, K_SECONDS(left), K_NO_WAIT);
+		}
 	}
 	aligned_next = 0;
 }
+
 static bool reserved_for(int c)
 {
 	return reservation.active && (reservation.conn == 0 || reservation.conn == c);
 }
+
 static bool reservation_matches(int c, const char *tag, const char *parent)
 {
 	return !reserved_for(c) || !strcasecmp(tag, reservation.tag) ||
@@ -114,8 +127,8 @@ static struct {
 } txmap[TXMAP_LEN];
 
 static const char *const names[ST_COUNT + 1] = {
-    "Available", "Preparing", "Charging",    "SuspendedEV", "SuspendedEVSE",
-    "Finishing", "Reserved",  "Unavailable", "Faulted",	    "Unknown",
+	"Available", "Preparing", "Charging",    "SuspendedEV", "SuspendedEVSE",
+	"Finishing", "Reserved",  "Unavailable", "Faulted",     "Unknown",
 };
 
 static char jbuf[1024];
@@ -126,8 +139,9 @@ void conn_init(void)
 	auth_init();
 	k_timer_init(&reservation_timer, reservation_expired, NULL);
 	if (store_load(STORE_REC_RESERVATION, &reservation, sizeof(reservation)) !=
-	    sizeof(reservation))
+	    sizeof(reservation)) {
 		memset(&reservation, 0, sizeof(reservation));
+	}
 }
 
 static bool valid(int c)
@@ -246,8 +260,9 @@ enum cp_status conn_status(int c)
 		if (unavailable(c)) {
 			return ST_UNAVAILABLE;
 		}
-		if (reserved_for(c))
+		if (reserved_for(c)) {
 			return ST_RESERVED;
+		}
 		return hw.cable_cs ? ST_PREPARING : ST_AVAILABLE;
 	}
 }
@@ -257,8 +272,9 @@ const char *conn_error_code(int c)
 	static char code[SIM_FAULT_MAX + 1];
 	struct sim_conn_state hw;
 
-	if (c == 0 && auth_conflict())
+	if (c == 0 && auth_conflict()) {
 		return "LocalListConflict";
+	}
 	if (!valid(c)) {
 		return "NoError";
 	}
@@ -296,8 +312,9 @@ static void send_authorize(int c, const char *tag)
 	jw_kv_str(&w, &first, "idTag", tag);
 	jw_raw(&w, "}");
 	conns[c].authorizing = true;
-	if (ocpp_enqueue_ex("Authorize", jbuf, false, c, tag, 0))
+	if (ocpp_enqueue_ex("Authorize", jbuf, false, c, tag, 0)) {
 		conns[c].authorizing = false;
+	}
 }
 
 /* Meter readings of one moment (live from the simulator, or stored for transactionData). */
@@ -353,7 +370,8 @@ static void write_meter_value(struct jw *w, const struct reading *r, const char 
 			continue;
 		}
 		jw_printf(w,
-			  /* location omitted = "Outlet" (spec 7.43 default): saves room in 1 KB messages */
+			  /* location omitted = "Outlet" (spec 7.43 default): saves room in 1 KB
+			     messages */
 			  "%s{\"value\":\"%s\",\"context\":\"%s\",\"format\":\"Raw\","
 			  "\"measurand\":\"%s\",\"unit\":\"%s\"}",
 			  first_sv ? "" : ",", val, context, m, unit);
@@ -378,9 +396,18 @@ static void meter_value(struct jw *w, int c, const char *context, const char *ke
  * the latest periodic / clock-aligned readings; Transaction.End is read at stop.
  * Kept in RAM only (not in the NVM checkpoint): after a reboot the list starts empty.
  */
-enum { SK_BEGIN, SK_PERIODIC, SK_CLOCK, SK_END };
+enum {
+	SK_BEGIN,
+	SK_PERIODIC,
+	SK_CLOCK,
+	SK_END
+};
+
 static const char *const sk_context[] = {
-	"Transaction.Begin", "Sample.Periodic", "Sample.Clock", "Transaction.End",
+	"Transaction.Begin",
+	"Sample.Periodic",
+	"Sample.Clock",
+	"Transaction.End",
 };
 #define TXDATA_RING 6
 
@@ -415,7 +442,7 @@ static const char *txdata_keys(int kind)
 
 static void txdata_record(int c, int kind)
 {
-	struct txsample smp = { .kind = (uint8_t)kind };
+	struct txsample smp = {.kind = (uint8_t)kind};
 
 	if (!*txdata_keys(kind)) {
 		return;
@@ -458,7 +485,7 @@ static bool txdata_append(struct jw *w, const struct txsample *smp, bool first, 
  * Begin and the periodic samples take what is left. */
 static void txdata_write(struct jw *w, int c)
 {
-	struct txsample end = { .kind = SK_END };
+	struct txsample end = {.kind = SK_END};
 	bool first = true, any = txdata[c].has_begin || txdata[c].count || *txdata_keys(SK_END);
 	size_t reserve = 4; /* "]}" + NUL */
 
@@ -499,12 +526,14 @@ static void send_meter_values(int c, const char *context, int64_t epoch)
 	const char *list = cfg_get(!strcmp(context, "Sample.Clock") ? "MeterValuesAlignedData"
 								    : "MeterValuesSampledData");
 
-	if (!list || !*list)
+	if (!list || !*list) {
 		list = "Energy.Active.Import.Register";
+	}
 	jw_init(&w, jbuf, sizeof(jbuf));
 	jw_printf(&w, "{\"connectorId\":%d", c);
-	if (conns[c].phase == PH_CHARGING && strcmp(context, "Trigger"))
+	if (conns[c].phase == PH_CHARGING && strcmp(context, "Trigger")) {
 		jw_raw(&w, ",\"transactionId\":%TX%");
+	}
 	jw_raw(&w, ",\"meterValue\":[");
 	meter_value(&w, c, context, list, epoch);
 	jw_raw(&w, "]}");
@@ -520,10 +549,12 @@ static void send_meter_values(int c, const char *context, int64_t epoch)
 void conn_trigger_meter(int c)
 {
 	if (c == 0) {
-		for (int i = 1; i <= CONN_MAX; i++)
+		for (int i = 1; i <= CONN_MAX; i++) {
 			send_meter_values(i, "Trigger", clock_now());
-	} else
+		}
+	} else {
 		send_meter_values(c, "Trigger", clock_now());
+	}
 }
 
 static void start_transaction(int c, const char *tag)
@@ -534,8 +565,9 @@ static void start_transaction(int c, const char *tag)
 	int interval;
 
 	if (conn_status(c) == ST_FAULTED || unavailable(c) ||
-	    !reservation_matches(c, tag, k->parent))
+	    !reservation_matches(c, tag, k->parent)) {
 		return;
+	}
 	if (!sim_lock(c)) {
 		/* DESIGN_core 8 / TC_024: lock motor failed -> do not start, report fault */
 		LOG_WRN("connector %d: lock failed, transaction not started", c);
@@ -595,7 +627,8 @@ static void stop_transaction(int c, const char *reason, const char *tag)
 	txdata_write(&w, c); /* only samples that fit; never a cut message */
 	jw_raw(&w, "}");
 	if (w.err) {
-		LOG_ERR("connector %d: StopTransaction does not fit, sent without transactionData", c);
+		LOG_ERR("connector %d: StopTransaction does not fit, sent without transactionData",
+			c);
 		jw_init(&w, jbuf, sizeof(jbuf));
 		jw_raw(&w, "{\"transactionId\":%TX%");
 		if (tag) {
@@ -609,8 +642,9 @@ static void stop_transaction(int c, const char *reason, const char *tag)
 	LOG_INF("connector %d: transaction #%d stopped (%s)", c, k->tx_local, reason);
 
 	/* Detachable cable: unlock so the driver can take it out. */
-	if (strcmp(reason, "EVDisconnected") || cfg_get_bool("UnlockConnectorOnEVSideDisconnect"))
+	if (strcmp(reason, "EVDisconnected") || cfg_get_bool("UnlockConnectorOnEVSideDisconnect")) {
 		sim_unlock(c);
+	}
 	sim_get(c, &hw);
 	k->phase = hw.cable_cs ? PH_FINISHING : PH_IDLE;
 	k->tx_tag[0] = '\0';
@@ -628,8 +662,9 @@ static void authorized(int c, const char *tag)
 	struct sim_conn_state hw;
 
 	if (conn_status(c) == ST_FAULTED || unavailable(c) ||
-	    !reservation_matches(c, tag, k->parent))
+	    !reservation_matches(c, tag, k->parent)) {
 		return;
+	}
 	sim_get(c, &hw);
 	if (hw.cable_cs && hw.cable_ev) {
 		start_transaction(c, tag);
@@ -676,16 +711,20 @@ static void on_card(int c, const char *tag)
 	}
 	const struct auth_info *a = auth_lookup(tag);
 	if (!reservation_matches(c, tag, a ? a->parent : NULL) &&
-	    (!reserved_for(c) || !reservation.parent[0]))
+	    (!reserved_for(c) || !reservation.parent[0])) {
 		return;
+	}
 	k->parent[0] = 0;
-	if (a && a->parent[0])
+	if (a && a->parent[0]) {
 		strcpy(k->parent, a->parent);
+	}
 	if (!ocpp_online()) {
-		if (ocpp_boot_state() != BOOT_ACCEPTED || !cfg_get_bool("LocalAuthorizeOffline"))
+		if (ocpp_boot_state() != BOOT_ACCEPTED || !cfg_get_bool("LocalAuthorizeOffline")) {
 			return;
-		if (auth_accepted(a) || (!a && cfg_get_bool("AllowOfflineTxForUnknownId")))
+		}
+		if (auth_accepted(a) || (!a && cfg_get_bool("AllowOfflineTxForUnknownId"))) {
 			authorized(c, tag);
+		}
 		return;
 	}
 	if (a && auth_accepted(a) && cfg_get_bool("LocalPreAuthorize")) {
@@ -737,8 +776,9 @@ void conn_on_hw(const struct sim_evt *e)
 		on_card(c, e->text);
 		break;
 	case SIM_EVT_FAULT:
-		if (reserved_for(c))
+		if (reserved_for(c)) {
 			reservation_clear();
+		}
 		if (k->phase == PH_CHARGING) {
 			stop_transaction(c, "Other", NULL);
 		}
@@ -770,16 +810,19 @@ bool conn_remote_start(int c, const char *tag)
 	if (cfg_get_bool("AuthorizeRemoteTxRequests")) {
 		const struct auth_info *a = auth_lookup(tag);
 		if (!reservation_matches(c, tag, a ? a->parent : NULL) &&
-		    (!reserved_for(c) || !reservation.parent[0]))
+		    (!reserved_for(c) || !reservation.parent[0])) {
 			return false;
+		}
 		on_card(c, tag);
 	} else {
 		const struct auth_info *a = auth_lookup(tag);
-		if (!reservation_matches(c, tag, a ? a->parent : NULL))
+		if (!reservation_matches(c, tag, a ? a->parent : NULL)) {
 			return false;
+		}
 		k->parent[0] = 0;
-		if (a)
+		if (a) {
 			strcpy(k->parent, a->parent);
+		}
 		authorized(c, tag);
 	}
 	return true;
@@ -817,8 +860,9 @@ enum avail_result conn_change_availability(int c, bool operative)
 		}
 		return AVAIL_SCHEDULED;
 	}
-	if (!operative && reservation.active && (c == 0 || reserved_for(c)))
+	if (!operative && reservation.active && (c == 0 || reserved_for(c))) {
 		reservation_clear();
+	}
 	set_inoperative(c, !operative);
 	if (c == 0 && operative) {
 		for (int i = 1; i <= CONN_MAX; i++) {
@@ -869,8 +913,9 @@ void conn_on_authorize_conf(int c, const char *tag, const char *status, const ch
 		return;
 	}
 	if (k->phase == PH_CHARGING) {
-		if (k->parent[0] && parent && !strcasecmp(k->parent, parent))
+		if (k->parent[0] && parent && !strcasecmp(k->parent, parent)) {
 			stop_transaction(c, "Local", tag);
+		}
 		return;
 	}
 	if (k->phase == PH_IDLE) {
@@ -890,8 +935,9 @@ void conn_on_start_conf(int tx_local, int transaction_id, const char *status, co
 		}
 		LOG_INF("connector %d: transaction #%d has id %d (%s)", c, tx_local, transaction_id,
 			status);
-		if (parent && *parent)
+		if (parent && *parent) {
 			strcpy(k->parent, parent);
+		}
 		if (strcmp(status, "Accepted") == 0) {
 			return;
 		}
@@ -927,11 +973,13 @@ void conn_on_call_failed(const char *action, int c, int tx_local)
 void conn_meter_config_changed(void)
 {
 	int interval = cfg_get_int("MeterValueSampleInterval", 0);
-	for (int c = 1; c <= CONN_MAX; c++)
+	for (int c = 1; c <= CONN_MAX; c++) {
 		conns[c].next_sample_at =
-		    interval > 0 ? k_uptime_get() + (int64_t)interval * 1000 : INT64_MAX;
+			interval > 0 ? k_uptime_get() + (int64_t)interval * 1000 : INT64_MAX;
+	}
 	aligned_next = 0;
 }
+
 static int64_t next_aligned_time(int64_t epoch, int interval)
 {
 	int64_t midnight = epoch - epoch % 86400;
@@ -943,8 +991,9 @@ void conn_tick(void)
 	int64_t now = k_uptime_get();
 	if (reservation_due) {
 		reservation_due = false;
-		if (reservation.active)
+		if (reservation.active) {
 			reservation_clear();
+		}
 	}
 	int ai = cfg_get_int("ClockAlignedDataInterval", 0);
 	if (ai != aligned_interval) {
@@ -953,11 +1002,11 @@ void conn_tick(void)
 	}
 	if (ai > 0 && clock_valid()) {
 		int64_t epoch = clock_now();
-		if (!aligned_next)
+		if (!aligned_next) {
 			aligned_next = next_aligned_time(epoch, ai);
+		}
 		if (epoch >= aligned_next) {
-			for (int c = 1; c <= CONN_MAX; c++)
-			{
+			for (int c = 1; c <= CONN_MAX; c++) {
 				send_meter_values(c, "Sample.Clock", aligned_next);
 				if (conns[c].phase == PH_CHARGING) {
 					txdata_record(c, SK_CLOCK);
@@ -974,9 +1023,9 @@ void conn_tick(void)
 			int t = cfg_get_int("ConnectionTimeOut", 0);
 
 			if (t > 0 && now - k->auth_at >= (int64_t)t * 1000) {
-				LOG_INF(
-				    "connector %d: no cable within %d s, authorization cancelled",
-				    c, t);
+				LOG_INF("connector %d: no cable within %d s, authorization "
+					"cancelled",
+					c, t);
 				k->phase = PH_IDLE;
 				k->auth_tag[0] = '\0';
 			}
@@ -986,40 +1035,49 @@ void conn_tick(void)
 
 			send_meter_values(c, "Sample.Periodic", clock_now());
 			txdata_record(c, SK_PERIODIC);
-			k->next_sample_at =
-			    interval > 0 ? k->next_sample_at + (int64_t)interval * 1000 : INT64_MAX;
+			k->next_sample_at = interval > 0
+						    ? k->next_sample_at + (int64_t)interval * 1000
+						    : INT64_MAX;
 		}
 	}
 }
 
 const char *conn_reserve(int c, int id, const char *tag, const char *parent, int64_t expiry)
 {
-	if (!conn_valid(c) || !clock_valid() || expiry <= clock_now())
+	if (!conn_valid(c) || !clock_valid() || expiry <= clock_now()) {
 		return "Rejected";
+	}
 	int socket = c ? c : 1;
 	enum cp_status st = conn_status(socket);
-	if (st == ST_FAULTED)
+	if (st == ST_FAULTED) {
 		return "Faulted";
-	if (unavailable(socket))
+	}
+	if (unavailable(socket)) {
 		return "Unavailable";
-	if (reservation.active && reservation.id != id)
+	}
+	if (reservation.active && reservation.id != id) {
 		return "Occupied";
-	if (st != ST_AVAILABLE && st != ST_RESERVED)
+	}
+	if (st != ST_AVAILABLE && st != ST_RESERVED) {
 		return "Occupied";
+	}
 	struct reservation next = {.active = true, .id = id, .conn = c, .expiry = expiry};
 	strcpy(next.tag, tag);
 	strcpy(next.parent, parent ? parent : "");
-	if (store_save(STORE_REC_RESERVATION, &next, sizeof(next)))
+	if (store_save(STORE_REC_RESERVATION, &next, sizeof(next))) {
 		return "Rejected";
+	}
 	reservation = next;
 	reservation_due = false;
 	conn_clock_changed();
 	return "Accepted";
 }
+
 bool conn_cancel_reservation(int id)
 {
-	if (!reservation.active || reservation.id != id)
+	if (!reservation.active || reservation.id != id) {
 		return false;
+	}
 	reservation_clear();
 	return true;
 }
@@ -1031,34 +1089,40 @@ struct conn_checkpoint {
 	int ids[TXMAP_LEN][2];
 	struct sim_conn_state hardware[CONN_MAX + 1];
 };
+
 size_t conn_checkpoint_save(void *out, size_t capacity)
 {
 	struct conn_checkpoint *p = out;
-	if (capacity < sizeof(*p))
+	if (capacity < sizeof(*p)) {
 		return 0;
+	}
 	memset(p, 0, sizeof(*p));
 	p->version = 1;
 	memcpy(p->conns, conns, sizeof(conns));
 	p->next_local = next_tx_local;
 	memcpy(p->ids, txmap, sizeof(txmap));
-	for (int c = 1; c <= CONN_MAX; c++)
+	for (int c = 1; c <= CONN_MAX; c++) {
 		sim_get(c, &p->hardware[c]);
+	}
 	return sizeof(*p);
 }
+
 void conn_checkpoint_load(const void *data, size_t size)
 {
 	const struct conn_checkpoint *p = data;
-	if (size != sizeof(*p) || p->version != 1)
+	if (size != sizeof(*p) || p->version != 1) {
 		return;
+	}
 	memcpy(conns, p->conns, sizeof(conns));
 	next_tx_local = p->next_local;
 	memcpy(txmap, p->ids, sizeof(txmap));
 	for (int c = 1; c <= CONN_MAX; c++) {
 		sim_restore(c, &p->hardware[c]);
 		conns[c].authorizing = false;
-		if (conns[c].phase == PH_CHARGING)
+		if (conns[c].phase == PH_CHARGING) {
 			conns[c].suspended_evse = true;
-		else if (conns[c].phase == PH_AUTHORIZED)
+		} else if (conns[c].phase == PH_AUTHORIZED) {
 			conns[c].phase = PH_IDLE;
+		}
 	}
 }

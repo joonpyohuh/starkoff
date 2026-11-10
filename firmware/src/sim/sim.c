@@ -15,14 +15,14 @@
 
 LOG_MODULE_REGISTER(sim, LOG_LEVEL_INF);
 
-#define CHARGE_POWER_W  7400   /* 32 A single phase */
-#define NOMINAL_V       230
-#define NOMINAL_TEMP_C  35
+#define CHARGE_POWER_W 7400 /* 32 A single phase */
+#define NOMINAL_V      230
+#define NOMINAL_TEMP_C 35
 
 /* Safe operating range. Outside it = fault (range check, docs/DESIGN_resilience.md 3-3). */
-#define MAX_CURRENT_A   40
-#define MAX_VOLTAGE_V   260
-#define MAX_TEMP_C      85
+#define MAX_CURRENT_A 40
+#define MAX_VOLTAGE_V 260
+#define MAX_TEMP_C    85
 
 K_MSGQ_DEFINE(sim_evtq, sizeof(struct sim_evt), 16, 4);
 static K_MUTEX_DEFINE(sim_lock_mtx);
@@ -63,7 +63,7 @@ static bool valid_conn(int c)
 
 static void post(uint8_t type, int c, const char *text)
 {
-	struct sim_evt e = { .type = type, .conn = (uint8_t)c };
+	struct sim_evt e = {.type = type, .conn = (uint8_t)c};
 
 	if (text) {
 		strncpy(e.text, text, sizeof(e.text) - 1);
@@ -348,19 +348,18 @@ size_t sim_status(char *buf, size_t len)
 	size_t n = 0;
 
 	k_mutex_lock(&sim_lock_mtx, K_FOREVER);
-	n += snprintf(buf + n, len - n, "power=%s led=%s link=%s",
-		      power_on ? "on" : "off", sim_led_green() ? "green" : "off",
-		      link_up ? "up" : "down");
+	n += snprintf(buf + n, len - n, "power=%s led=%s link=%s", power_on ? "on" : "off",
+		      sim_led_green() ? "green" : "off", link_up ? "up" : "down");
 	for (int c = 1; c <= SIM_MAX_CONN && n < len; c++) {
 		struct sim_conn_state *s = &conn[c];
 
 		n += snprintf(buf + n, len - n,
 			      " c%d.cable=%d c%d.ev=%d c%d.locked=%d c%d.relay=%d c%d.wh=%u"
 			      " c%d.power_w=%d c%d.noise=%s c%d.glitches=%u c%d.fault=%s",
-			      c, s->cable_cs, c, s->cable_ev, c, s->locked, c, s->relay,
-			      c, (unsigned)(s->energy_mwh / 1000), c, s->power_w,
-			      c, noise_on[c] ? "on" : "off", c, (unsigned)glitches[c],
-			      c, *s->fault ? s->fault : "none");
+			      c, s->cable_cs, c, s->cable_ev, c, s->locked, c, s->relay, c,
+			      (unsigned)(s->energy_mwh / 1000), c, s->power_w, c,
+			      noise_on[c] ? "on" : "off", c, (unsigned)glitches[c], c,
+			      *s->fault ? s->fault : "none");
 	}
 	k_mutex_unlock(&sim_lock_mtx);
 	return MIN(n, len);
@@ -368,12 +367,16 @@ size_t sim_status(char *buf, size_t len)
 
 void sim_restore(int c, const struct sim_conn_state *state)
 {
- if(!valid_conn(c)) return;
- k_mutex_lock(&sim_lock_mtx,K_FOREVER);
- conn[c]=*state; conn[c].relay=false; conn[c].power_w=0;
- raw_cable[c] = state->cable_cs;                 /* debouncer starts settled */
- deb_count[c] = state->cable_cs ? DEB_MAX : 0;
- k_mutex_unlock(&sim_lock_mtx);
+	if (!valid_conn(c)) {
+		return;
+	}
+	k_mutex_lock(&sim_lock_mtx, K_FOREVER);
+	conn[c] = *state;
+	conn[c].relay = false;
+	conn[c].power_w = 0;
+	raw_cable[c] = state->cable_cs; /* debouncer starts settled */
+	deb_count[c] = state->cable_cs ? DEB_MAX : 0;
+	k_mutex_unlock(&sim_lock_mtx);
 }
 
 static volatile bool hung;

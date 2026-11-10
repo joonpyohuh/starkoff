@@ -26,7 +26,10 @@ LOG_MODULE_REGISTER(cfg, LOG_LEVEL_INF);
 
 /* Measurands this charger can measure (sim/sim.c provides all of them). */
 static const char *const measurands[] = {
-	"Energy.Active.Import.Register", "Power.Active.Import", "Current.Import", "Voltage",
+	"Energy.Active.Import.Register",
+	"Power.Active.Import",
+	"Current.Import",
+	"Voltage",
 };
 
 /* clang-format off */
@@ -179,8 +182,8 @@ static void save_locked(void)
 		if (strcmp(items[i].val, items[i].def) == 0) {
 			continue;
 		}
-		int n = snprintf(file_buf + used, sizeof(file_buf) - used, "%s=%s\n",
-				 items[i].key, items[i].val);
+		int n = snprintf(file_buf + used, sizeof(file_buf) - used, "%s=%s\n", items[i].key,
+				 items[i].val);
 		if (n < 0 || used + n >= sizeof(file_buf)) {
 			LOG_ERR("config does not fit in one record");
 			return;
@@ -220,7 +223,7 @@ enum cfg_set_result cfg_set(const char *key, const char *value, bool from_ocpp)
 		}
 		break;
 	case CFG_INT:
-		if (!valid_int(norm) || strtoul(norm,NULL,10)>86400) {
+		if (!valid_int(norm) || strtoul(norm, NULL, 10) > 86400) {
 			return CFG_REJECTED;
 		}
 		break;
@@ -271,7 +274,8 @@ void cfg_init(void)
 		file_buf[len] = '\0';
 		char *save, *line;
 
-		for (line = strtok_r(file_buf, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+		for (line = strtok_r(file_buf, "\n", &save); line;
+		     line = strtok_r(NULL, "\n", &save)) {
 			char *eq = strchr(line, '=');
 			struct cfg_item *it;
 

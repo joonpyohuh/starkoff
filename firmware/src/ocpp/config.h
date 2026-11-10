@@ -8,26 +8,31 @@
 
 #define CFG_VAL_MAX 256
 
-enum cfg_type { CFG_BOOL, CFG_INT, CFG_STR, CFG_CSL };
+enum cfg_type {
+	CFG_BOOL,
+	CFG_INT,
+	CFG_STR,
+	CFG_CSL
+};
 
 enum cfg_flags {
-	CFG_RO       = 1 << 0, /* readonly="true" in GetConfiguration */
-	CFG_HIDDEN   = 1 << 1, /* internal: not visible over OCPP (server URL, CP id) */
-	CFG_REBOOT   = 1 << 2, /* ChangeConfiguration answers RebootRequired */
+	CFG_RO = 1 << 0,     /* readonly="true" in GetConfiguration */
+	CFG_HIDDEN = 1 << 1, /* internal: not visible over OCPP (server URL, CP id) */
+	CFG_REBOOT = 1 << 2, /* ChangeConfiguration answers RebootRequired */
 };
 
 enum cfg_set_result {
 	CFG_ACCEPTED,
-	CFG_REJECTED,        /* readonly or bad value */
+	CFG_REJECTED, /* readonly or bad value */
 	CFG_REBOOT_REQUIRED,
-	CFG_NOT_SUPPORTED,   /* unknown key */
+	CFG_NOT_SUPPORTED, /* unknown key */
 };
 
 struct cfg_item {
 	const char *key;
 	enum cfg_type type;
 	unsigned flags;
-	const char *def;     /* default value */
+	const char *def; /* default value */
 	char val[CFG_VAL_MAX];
 };
 
@@ -38,7 +43,7 @@ struct cfg_item {
 #define CFG_INOPERATIVE "_Inoperative"
 
 void cfg_init(void);
-const char *cfg_get(const char *key);       /* NULL if unknown */
+const char *cfg_get(const char *key); /* NULL if unknown */
 int cfg_get_int(const char *key, int fallback);
 bool cfg_get_bool(const char *key);
 /* from_ocpp=true applies OCPP rules (readonly/hidden keys are refused). */

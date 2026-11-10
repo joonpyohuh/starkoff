@@ -12,6 +12,7 @@ From the browser: {"t":"cmd","cmd":"plug 1"}  {"t":"run","id":"TC_003_CS"}  {"t"
 The test buttons call lab.tests.framework.run_one, i.e. exactly the code the terminal
 command (scripts/run_lab.sh) runs.
 """
+
 import asyncio
 import http
 import json
@@ -26,13 +27,32 @@ from lab.web.telemetry import Telemetry
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
 # Only these control commands may be sent from the browser.
-ALLOWED = ("plug", "unplug", "ev_disconnect", "card", "power", "lock_fail", "fault",
-           "net_down", "net_up", "status", "reboot", "noise", "hang")
+ALLOWED = (
+    "plug",
+    "unplug",
+    "ev_disconnect",
+    "card",
+    "power",
+    "lock_fail",
+    "fault",
+    "net_down",
+    "net_up",
+    "status",
+    "reboot",
+    "noise",
+    "hang",
+)
 
 
 def ev_json(ev):
-    return {"wall": ev.wall, "dir": ev.direction, "type": ev.type, "id": ev.id,
-            "action": ev.action, "raw": ev.raw}
+    return {
+        "wall": ev.wall,
+        "dir": ev.direction,
+        "type": ev.type,
+        "id": ev.id,
+        "action": ev.action,
+        "raw": ev.raw,
+    }
 
 
 class WebUI:
@@ -69,8 +89,14 @@ class WebUI:
         self.telemetry.close()
 
     async def start(self):
-        self.server = await websockets.serve(self._ws, self.host, self.port, process_request=self._http,
-                                              max_size=16384, origins=[f"http://{self.host}:{self.port}", f"http://localhost:{self.port}"])
+        self.server = await websockets.serve(
+            self._ws,
+            self.host,
+            self.port,
+            process_request=self._http,
+            max_size=16384,
+            origins=[f"http://{self.host}:{self.port}", f"http://localhost:{self.port}"],
+        )
         self._task(self._pump())
         self._task(self._poll_status())
 
@@ -78,15 +104,18 @@ class WebUI:
     async def _http(self, path, headers):
         path = path.split("?")[0]
         if path == "/ws":
-            return None                              # continue with the WebSocket handshake
+            return None  # continue with the WebSocket handshake
         name = STATIC.get(path)
         if not name:
             return http.HTTPStatus.NOT_FOUND, [("Content-Type", "text/plain")], b"not found\n"
         with open(os.path.join(HERE, name), "rb") as f:
             body = f.read()
         ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"
-        return http.HTTPStatus.OK, [("Content-Type", ctype + "; charset=utf-8"),
-                                    ("Cache-Control", "no-store")], body
+        return (
+            http.HTTPStatus.OK,
+            [("Content-Type", ctype + "; charset=utf-8"), ("Cache-Control", "no-store")],
+            body,
+        )
 
     # ---------------- broadcasting ----------------
     async def _pump(self):
@@ -106,8 +135,13 @@ class WebUI:
         while True:
             try:
                 st = await asyncio.wait_for(self.ctrl.status(), 3)
-                msg = {"t": "status", "ok": True, "st": st,
-                       "csms_connected": bool(self.csms.conns), "stats": self.telemetry.stats()}
+                msg = {
+                    "t": "status",
+                    "ok": True,
+                    "st": st,
+                    "csms_connected": bool(self.csms.conns),
+                    "stats": self.telemetry.stats(),
+                }
                 self.telemetry.plugged = st.get("c1.cable") == "1"
             except Exception:
                 msg = {"t": "status", "ok": False, "csms_connected": bool(self.csms.conns)}
@@ -117,13 +151,17 @@ class WebUI:
     # ---------------- browser connection ----------------
     async def _ws(self, ws, path):
         self.clients.add(ws)
-        await ws.send(json.dumps({
-            "t": "hello",
-            "tests": [{"id": k, "name": v[0]} for k, v in TESTS.items()],
-            "results": self.results,
-            "running": self.running,
-            "events": [ev_json(e) for e in self.csms.events[-300:]],
-        }))
+        await ws.send(
+            json.dumps(
+                {
+                    "t": "hello",
+                    "tests": [{"id": k, "name": v[0]} for k, v in TESTS.items()],
+                    "results": self.results,
+                    "running": self.running,
+                    "events": [ev_json(e) for e in self.csms.events[-300:]],
+                }
+            )
+        )
         try:
             async for raw in ws:
                 try:
@@ -175,8 +213,18 @@ class WebUI:
 
     async def _ocpp(self, msg):
         action, payload = msg.get("action"), msg.get("payload")
-        allowed = {"RemoteStartTransaction", "RemoteStopTransaction", "ReserveNow", "CancelReservation",
-                   "TriggerMessage", "GetLocalListVersion", "SendLocalList", "ClearCache", "GetConfiguration", "ChangeConfiguration"}
+        allowed = {
+            "RemoteStartTransaction",
+            "RemoteStopTransaction",
+            "ReserveNow",
+            "CancelReservation",
+            "TriggerMessage",
+            "GetLocalListVersion",
+            "SendLocalList",
+            "ClearCache",
+            "GetConfiguration",
+            "ChangeConfiguration",
+        }
         if not isinstance(action, str) or action not in allowed or not isinstance(payload, dict):
             return
         if self.running is not None:

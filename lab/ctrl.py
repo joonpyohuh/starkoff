@@ -3,6 +3,7 @@ Client for the firmware's TCP control port (simulated hardware).
 Keeps one connection open (Zephyr TCP does not support half-close, see DECISIONS D14).
 Reconnects automatically, e.g. after the firmware rebooted.
 """
+
 import asyncio
 
 
@@ -17,7 +18,8 @@ class Ctrl:
         while True:
             try:
                 self.reader, self.writer = await asyncio.wait_for(
-                    asyncio.open_connection(self.host, self.port), 2)
+                    asyncio.open_connection(self.host, self.port), 2
+                )
                 return
             except (OSError, asyncio.TimeoutError):
                 if asyncio.get_running_loop().time() > deadline:
@@ -43,7 +45,7 @@ class Ctrl:
                         return reply.decode().strip()
                 except (OSError, asyncio.TimeoutError):
                     pass
-                self._drop()   # stale connection (firmware rebooted): retry once
+                self._drop()  # stale connection (firmware rebooted): retry once
             raise ConnectionError(f"no reply to '{line}'")
 
     async def status(self):

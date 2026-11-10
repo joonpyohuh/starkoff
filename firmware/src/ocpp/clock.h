@@ -10,5 +10,5 @@ bool clock_parse_iso(const char *s, int64_t *epoch_out);
 void clock_format_iso(int64_t epoch, char *out, size_t len);
 bool clock_sync_iso(const char *iso);
 bool clock_valid(void);
-int64_t clock_now(void);            /* seconds since 1970 (UTC) */
+int64_t clock_now(void); /* seconds since 1970 (UTC) */
 void clock_now_iso(char *out, size_t len);

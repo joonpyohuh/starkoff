@@ -8,6 +8,7 @@ Mock Central System (CSMS) for OCPP 1.6J. Lab tool only, not part of the firmwar
   the web UI can show them.
 - Tests can send CALLs to the charge point with CPConn.call().
 """
+
 import asyncio
 import datetime as dt
 import itertools
@@ -29,14 +30,17 @@ class Event:
     def __init__(self, direction, raw, msg):
         self.t = time.monotonic()
         self.wall = utc_now_iso()
-        self.direction = direction          # "cp->cs" or "cs->cp"
+        self.direction = direction  # "cp->cs" or "cs->cp"
         self.raw = raw
-        self.msg = msg                      # parsed JSON list
+        self.msg = msg  # parsed JSON list
         self.type = msg[0] if isinstance(msg, list) and msg else None
         self.id = msg[1] if isinstance(msg, list) and len(msg) > 1 else None
         self.action = msg[2] if self.type == 2 and len(msg) > 2 else None
-        self.payload = msg[3] if self.type == 2 and len(msg) > 3 else (
-            msg[2] if self.type == 3 and len(msg) > 2 else None)
+        self.payload = (
+            msg[3]
+            if self.type == 2 and len(msg) > 3
+            else (msg[2] if self.type == 3 and len(msg) > 2 else None)
+        )
 
     def short(self):
         arrow = ">>" if self.direction == "cs->cp" else "<<"
@@ -46,7 +50,7 @@ class Event:
 class Responder:
     """How the CSMS answers CALLs from the charge point. Tests may change any field."""
 
-    _tx_ids = itertools.count(1)   # transactionIds keep increasing across tests
+    _tx_ids = itertools.count(1)  # transactionIds keep increasing across tests
 
     def __init__(self):
         self.heartbeat_interval = 300
@@ -54,7 +58,7 @@ class Responder:
         self.boot_script = []
         self.valid_tags = {"TAG001": "Accepted", "TAG002": "Accepted"}
         self.parents = {}
-        self.overrides = {}   # action -> function(payload) -> response payload
+        self.overrides = {}  # action -> function(payload) -> response payload
 
     def tag_info(self, tag):
         info = {"status": self.valid_tags.get(tag, "Invalid")}
@@ -66,8 +70,9 @@ class Responder:
         if action in self.overrides:
             return self.overrides[action](payload)
         if action == "BootNotification":
-            status, interval = (self.boot_script.pop(0) if self.boot_script
-                                else ("Accepted", self.heartbeat_interval))
+            status, interval = (
+                self.boot_script.pop(0) if self.boot_script else ("Accepted", self.heartbeat_interval)
+            )
             return {"status": status, "currentTime": utc_now_iso(), "interval": interval}
         if action == "Heartbeat":
             return {"currentTime": utc_now_iso()}
@@ -75,8 +80,7 @@ class Responder:
             return {"idTagInfo": self.tag_info(payload.get("idTag"))}
         if action == "StartTransaction":
             tx = next(Responder._tx_ids)
-            return {"transactionId": tx,
-                    "idTagInfo": self.tag_info(payload.get("idTag"))}
+            return {"transactionId": tx, "idTagInfo": self.tag_info(payload.get("idTag"))}
         if action == "StopTransaction":
             return {"idTagInfo": {"status": "Accepted"}} if payload.get("idTag") else {}
         # StatusNotification, MeterValues, ... have empty confirmations
@@ -90,10 +94,10 @@ class CPConn:
         self.csms = csms
         self.cp_id = cp_id
         self.ws = ws
-        self.pending = {}            # our CALL id -> Future
+        self.pending = {}  # our CALL id -> Future
         self.ids = itertools.count(1)
         self.closed = asyncio.Event()
-        self.reply_index = {}        # our CALL id -> index of its answer in CSMS.events
+        self.reply_index = {}  # our CALL id -> index of its answer in CSMS.events
 
     async def call(self, action, payload, timeout=15):
         """Send a CALL to the charge point, return its CALLRESULT payload.
@@ -120,16 +124,16 @@ class CSMS:
         self.host, self.port = host, port
         self.verbose = verbose
         self.responder = Responder()
-        self.conns = {}              # cp_id -> CPConn (latest connection)
-        self.events = []             # every Event, in order
-        self.listeners = []          # callables(event) e.g. web UI
+        self.conns = {}  # cp_id -> CPConn (latest connection)
+        self.events = []  # every Event, in order
+        self.listeners = []  # callables(event) e.g. web UI
         self._new_event = asyncio.Condition()
         self._server = None
 
     async def start(self):
         self._server = await websockets.serve(
-            self._handler, self.host, self.port, subprotocols=[SUBPROTOCOL],
-            ping_interval=20, ping_timeout=20)
+            self._handler, self.host, self.port, subprotocols=[SUBPROTOCOL], ping_interval=20, ping_timeout=20
+        )
 
     async def stop(self):
         if self._server:
@@ -197,7 +201,7 @@ class CSMS:
                     except CallError as exc:
                         await self._send(conn, [4, ev.id, exc.code, str(exc), {}])
                         continue
-                    if payload is not None:   # None = do not answer (tests of timeouts)
+                    if payload is not None:  # None = do not answer (tests of timeouts)
                         await self._send(conn, [3, ev.id, payload])
                 elif ev.type in (3, 4) and ev.id in conn.pending:
                     conn.reply_index[ev.id] = len(self.events) - 1

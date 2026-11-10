@@ -37,18 +37,18 @@
 
 LOG_MODULE_REGISTER(ocpp, LOG_LEVEL_INF);
 
-#define FW_VERSION "0.3.0"
-#define CALL_TIMEOUT_MS 30000 /* no answer -> treat connection as broken */
-#define BOOT_RETRY_DEFAULT 30 /* s, when the server gives interval 0 */
-#define BACKOFF_MIN_S 5
-#define BACKOFF_MAX_S 60
-#define LOOP_MS 50
+#define FW_VERSION         "0.3.0"
+#define CALL_TIMEOUT_MS    30000 /* no answer -> treat connection as broken */
+#define BOOT_RETRY_DEFAULT 30    /* s, when the server gives interval 0 */
+#define BACKOFF_MIN_S      5
+#define BACKOFF_MAX_S      60
+#define LOOP_MS            50
 
-#define OUTQ_LEN 16
+#define OUTQ_LEN        16
 #define OUT_PAYLOAD_MAX 1024
-#define RX_MAX 8192
-#define TX_MAX 4096
-#define LOG_MSG_MAX 300
+#define RX_MAX          8192
+#define TX_MAX          4096
+#define LOG_MSG_MAX     300
 
 /* ---------------- state ---------------- */
 
@@ -69,14 +69,15 @@ static int64_t stable_since[CONN_MAX + 1];
 struct out_msg {
 	char action[32];
 	char payload[OUT_PAYLOAD_MAX]; /* may contain %TX% = real transactionId, filled at send */
-	bool tx_related;	       /* transaction message: kept across reconnects */
-	int conn;		       /* connector the message belongs to (answer routing) */
-	char tag[21];		       /* idTag, for Authorize answers */
-	int tx_local;		       /* local transaction number (connector.c) */
+	bool tx_related;               /* transaction message: kept across reconnects */
+	int conn;                      /* connector the message belongs to (answer routing) */
+	char tag[21];                  /* idTag, for Authorize answers */
+	int tx_local;                  /* local transaction number (connector.c) */
 	int failures;
 	int64_t retry_at;
 	bool triggered;
 };
+
 static bool handling_trigger;
 static struct out_msg outq[OUTQ_LEN];
 static int outq_head, outq_count;
@@ -114,33 +115,40 @@ static struct checkpoint {
 	struct out_msg messages[OUTQ_LEN];
 	uint8_t connectors[2048] __aligned(8);
 } snapshot, previous_snapshot;
+
 static bool recovered;
+
 static void checkpoint_save(void)
 {
 	memset(&snapshot, 0, sizeof(snapshot));
 	snapshot.version = 1;
 	snapshot.conn_bytes =
-	    conn_checkpoint_save(snapshot.connectors, sizeof(snapshot.connectors));
+		conn_checkpoint_save(snapshot.connectors, sizeof(snapshot.connectors));
 	for (int i = 0; i < outq_count; i++) {
 		struct out_msg *m = &outq[(outq_head + i) % OUTQ_LEN];
-		if (m->tx_related)
+		if (m->tx_related) {
 			snapshot.messages[snapshot.count++] = *m;
+		}
 	}
 	if (memcmp(&snapshot, &previous_snapshot, sizeof(snapshot)) &&
-	    !store_save(STORE_REC_QUEUE, &snapshot, sizeof(snapshot)))
+	    !store_save(STORE_REC_QUEUE, &snapshot, sizeof(snapshot))) {
 		previous_snapshot = snapshot;
+	}
 }
+
 static void checkpoint_load(void)
 {
 	if (store_load(STORE_REC_QUEUE, &snapshot, sizeof(snapshot)) != sizeof(snapshot) ||
 	    snapshot.version != 1 || snapshot.count < 0 || snapshot.count > OUTQ_LEN ||
-	    snapshot.conn_bytes > sizeof(snapshot.connectors))
+	    snapshot.conn_bytes > sizeof(snapshot.connectors)) {
 		return;
+	}
 	outq_count = snapshot.count;
 	outq_head = 0;
 	memcpy(outq, snapshot.messages, sizeof(outq));
-	for (int i = 0; i < outq_count; i++)
+	for (int i = 0; i < outq_count; i++) {
 		outq[i].retry_at = 0;
+	}
 	conn_checkpoint_load(snapshot.connectors, snapshot.conn_bytes);
 	previous_snapshot = snapshot;
 	recovered = true;
@@ -261,8 +269,9 @@ int ocpp_enqueue_ex(const char *action, const char *payload, bool tx_related, in
 	 */
 	if (boot == BOOT_PENDING && handling_trigger) {
 		insert = (inflight.active && inflight.from_queue) ? 1 : 0;
-		for (int i = outq_count; i > insert; i--)
+		for (int i = outq_count; i > insert; i--) {
 			outq[(outq_head + i) % OUTQ_LEN] = outq[(outq_head + i - 1) % OUTQ_LEN];
+		}
 	}
 	m = &outq[(outq_head + insert) % OUTQ_LEN];
 	strncpy(m->action, action, sizeof(m->action) - 1);
@@ -353,8 +362,9 @@ static void enqueue_status(int c)
 	jw_kv_int(&w, &first, "connectorId", c);
 	jw_kv_str(&w, &first, "errorCode", conn_error_code(c));
 	jw_kv_str(&w, &first, "status", conn_status_str(s));
-	if (s == ST_SUSPENDED_EV)
+	if (s == ST_SUSPENDED_EV) {
 		jw_kv_str(&w, &first, "info", "EV side disconnected");
+	}
 	jw_kv_str(&w, &first, "timestamp", ts);
 	jw_raw(&w, "}");
 	if (ocpp_enqueue("StatusNotification", paybuf, false) == 0) {
@@ -456,10 +466,10 @@ static void h_change_configuration(const char *id, int pl)
 {
 	char key[64], val[CFG_VAL_MAX];
 	static const char *const res_str[] = {
-	    "Accepted",
-	    "Rejected",
-	    "RebootRequired",
-	    "NotSupported",
+		"Accepted",
+		"Rejected",
+		"RebootRequired",
+		"NotSupported",
 	};
 	enum cfg_set_result r;
 
@@ -470,8 +480,9 @@ static void h_change_configuration(const char *id, int pl)
 	}
 	r = cfg_set(key, val, true);
 	if (r == CFG_ACCEPTED && (!strcasecmp(key, "MeterValueSampleInterval") ||
-				  !strcasecmp(key, "ClockAlignedDataInterval")))
+				  !strcasecmp(key, "ClockAlignedDataInterval"))) {
 		conn_meter_config_changed();
+	}
 	snprintf(paybuf, sizeof(paybuf), "{\"status\":\"%s\"}", res_str[r]);
 	send_result(id, paybuf);
 	if (r == CFG_ACCEPTED && strcasecmp(key, "HeartbeatInterval") == 0) {
@@ -580,16 +591,19 @@ static void h_local_version(const char *id, int pl)
 	snprintf(paybuf, sizeof(paybuf), "{\"listVersion\":%d}", auth_version());
 	send_result(id, paybuf);
 }
+
 static void h_local_list(const char *id, int pl)
 {
 	reply_status(id, auth_list_update(&jp, pl));
 }
+
 static void h_clear_cache(const char *id, int pl)
 {
 	ARG_UNUSED(pl);
 	auth_clear_cache();
 	reply_status(id, "Accepted");
 }
+
 static void h_data_transfer(const char *id, int pl)
 {
 	char vendor[256];
@@ -599,6 +613,7 @@ static void h_data_transfer(const char *id, int pl)
 	}
 	reply_status(id, "UnknownVendorId");
 }
+
 static void h_reserve(const char *id, int pl)
 {
 	int c, r;
@@ -614,6 +629,7 @@ static void h_reserve(const char *id, int pl)
 	}
 	reply_status(id, conn_reserve(c, r, tag, parent, expiry));
 }
+
 static void h_cancel_reservation(const char *id, int pl)
 {
 	int r;
@@ -623,7 +639,9 @@ static void h_cancel_reservation(const char *id, int pl)
 	}
 	reply_status(id, conn_cancel_reservation(r) ? "Accepted" : "Rejected");
 }
+
 static bool trigger_boot;
+
 static void h_trigger(const char *id, int pl)
 {
 	char action[40];
@@ -647,17 +665,20 @@ static void h_trigger(const char *id, int pl)
 	reply_status(id, "Accepted");
 	handling_trigger = true;
 	if (status) {
-		if (given)
+		if (given) {
 			enqueue_status(c);
-		else
-			for (int i = 0; i <= CONN_MAX; i++)
+		} else {
+			for (int i = 0; i <= CONN_MAX; i++) {
 				enqueue_status(i);
-	} else if (meter)
+			}
+		}
+	} else if (meter) {
 		conn_trigger_meter(c);
-	else if (!strcmp(action, "Heartbeat"))
+	} else if (!strcmp(action, "Heartbeat")) {
 		ocpp_enqueue("Heartbeat", "{}", false);
-	else
+	} else {
 		trigger_boot = true;
+	}
 	handling_trigger = false;
 }
 
@@ -667,20 +688,20 @@ struct call_handler {
 };
 
 static const struct call_handler handlers[] = {
-    {"GetConfiguration", h_get_configuration},
-    {"ChangeConfiguration", h_change_configuration},
-    {"RemoteStartTransaction", h_remote_start},
-    {"RemoteStopTransaction", h_remote_stop},
-    {"ChangeAvailability", h_change_availability},
-    {"Reset", h_reset},
-    {"UnlockConnector", h_unlock},
-    {"GetLocalListVersion", h_local_version},
-    {"SendLocalList", h_local_list},
-    {"ClearCache", h_clear_cache},
-    {"ReserveNow", h_reserve},
-    {"CancelReservation", h_cancel_reservation},
-    {"TriggerMessage", h_trigger},
-    {"DataTransfer", h_data_transfer},
+	{"GetConfiguration", h_get_configuration},
+	{"ChangeConfiguration", h_change_configuration},
+	{"RemoteStartTransaction", h_remote_start},
+	{"RemoteStopTransaction", h_remote_stop},
+	{"ChangeAvailability", h_change_availability},
+	{"Reset", h_reset},
+	{"UnlockConnector", h_unlock},
+	{"GetLocalListVersion", h_local_version},
+	{"SendLocalList", h_local_list},
+	{"ClearCache", h_clear_cache},
+	{"ReserveNow", h_reserve},
+	{"CancelReservation", h_cancel_reservation},
+	{"TriggerMessage", h_trigger},
+	{"DataTransfer", h_data_transfer},
 };
 
 static void handle_call(const char *id, const char *action, int pl)
@@ -803,7 +824,7 @@ static void handle_error(const char *id, int code_tok)
 		if (m->failures < cfg_get_int("TransactionMessageAttempts", 3)) {
 			m->retry_at = k_uptime_get() +
 				      (int64_t)cfg_get_int("TransactionMessageRetryInterval", 60) *
-					  1000 * m->failures;
+					      1000 * m->failures;
 			return;
 		}
 	}
@@ -973,10 +994,11 @@ static void report_status_changes(void)
 		}
 		if ((current != reported[c] || (c == 0 && reported_conflict != auth_conflict())) &&
 		    k_uptime_get() - stable_since[c] >=
-			(int64_t)cfg_get_int("MinimumStatusDuration", 0) * 1000) {
+			    (int64_t)cfg_get_int("MinimumStatusDuration", 0) * 1000) {
 			enqueue_status(c);
-			if (c == 0)
+			if (c == 0) {
 				reported_conflict = auth_conflict();
+			}
 		}
 	}
 }
@@ -988,8 +1010,9 @@ static void send_next(void)
 		return;
 	}
 	struct out_msg *m = &outq[outq_head];
-	if ((boot == BOOT_PENDING && !m->triggered) || k_uptime_get() < m->retry_at)
+	if ((boot == BOOT_PENDING && !m->triggered) || k_uptime_get() < m->retry_at) {
 		return;
+	}
 	const char *ph = strstr(m->payload, "%TX%");
 
 	if (ph) {

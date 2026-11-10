@@ -62,19 +62,22 @@ static bool parse_iso_ms(const char *s, int64_t *ms_out)
 	}
 	static const int month_days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 	if (y < 1970 || mo < 1 || mo > 12 || d < 1 || h < 0 || h > 23 || mi < 0 || mi > 59 ||
-	    sec < 0 || sec > 59)
+	    sec < 0 || sec > 59) {
 		return false;
+	}
 	int days = month_days[mo - 1] + (mo == 2 && y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
-	if (d > days)
+	if (d > days) {
 		return false;
+	}
 	t = days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + sec;
 	s += n;
 	if (*s == '.') {
 		int digits = 0;
 
 		s++;
-		if (!isdigit((unsigned char)*s))
+		if (!isdigit((unsigned char)*s)) {
 			return false;
+		}
 		while (isdigit((unsigned char)*s)) {
 			if (digits < 3) { /* keep milliseconds, ignore finer digits */
 				frac_ms = frac_ms * 10 + (*s - '0');
@@ -82,19 +85,22 @@ static bool parse_iso_ms(const char *s, int64_t *ms_out)
 			}
 			s++;
 		}
-		while (digits++ < 3)
+		while (digits++ < 3) {
 			frac_ms *= 10;
+		}
 	}
 	if (*s == 'Z' && !s[1]) {
 	} else if ((*s == '+' || *s == '-') && strlen(s) == 6 && s[3] == ':' &&
 		   isdigit((unsigned char)s[1]) && isdigit((unsigned char)s[2]) &&
 		   isdigit((unsigned char)s[4]) && isdigit((unsigned char)s[5])) {
 		int oh = (s[1] - '0') * 10 + s[2] - '0', om = (s[4] - '0') * 10 + s[5] - '0';
-		if (oh > 23 || om > 59)
+		if (oh > 23 || om > 59) {
 			return false;
+		}
 		t += (*s == '+' ? -1 : 1) * (oh * 3600 + om * 60);
-	} else
+	} else {
 		return false;
+	}
 	*ms_out = t * 1000 + frac_ms;
 	return true;
 }
@@ -103,8 +109,9 @@ bool clock_parse_iso(const char *s, int64_t *epoch_out)
 {
 	int64_t ms;
 
-	if (!parse_iso_ms(s, &ms))
+	if (!parse_iso_ms(s, &ms)) {
 		return false;
+	}
 	*epoch_out = ms / 1000; /* dates are after 1970 (checked), so this rounds down */
 	return true;
 }
@@ -138,8 +145,17 @@ bool clock_sync_iso(const char *iso)
 	return true;
 }
 
-bool clock_valid(void) { return valid; }
+bool clock_valid(void)
+{
+	return valid;
+}
 
-int64_t clock_now(void) { return (base_epoch_ms + (k_uptime_get() - base_uptime)) / 1000; }
+int64_t clock_now(void)
+{
+	return (base_epoch_ms + (k_uptime_get() - base_uptime)) / 1000;
+}
 
-void clock_now_iso(char *out, size_t len) { clock_format_iso(clock_now(), out, len); }
+void clock_now_iso(char *out, size_t len)
+{
+	clock_format_iso(clock_now(), out, len);
+}

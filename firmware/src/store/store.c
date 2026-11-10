@@ -36,7 +36,7 @@ struct rec_hdr {
 };
 
 static const struct device *nvm_dev = DEVICE_DT_GET(DT_NODELABEL(nvmem0));
-static uint8_t *nvm;    /* base of the mapped memory, NULL if not available */
+static uint8_t *nvm; /* base of the mapped memory, NULL if not available */
 static size_t nvm_size;
 static K_MUTEX_DEFINE(store_lock);
 
@@ -50,7 +50,8 @@ static K_MUTEX_DEFINE(store_lock);
 
 static size_t rec_max(int rec_id)
 {
-	return rec_id == STORE_REC_QUEUE ? QUEUE_SLOT_BYTES - sizeof(struct rec_hdr) : STORE_REC_MAX;
+	return rec_id == STORE_REC_QUEUE ? QUEUE_SLOT_BYTES - sizeof(struct rec_hdr)
+					 : STORE_REC_MAX;
 }
 
 static uint8_t *slot_ptr(int rec_id, int slot)

@@ -10,6 +10,7 @@ Lab command line.
 Without --qemu the firmware must already be running (scripts/run_qemu.sh) and
 pointing at this CSMS (default ws://10.0.2.2:9000/ocpp).
 """
+
 import argparse
 import asyncio
 import os
@@ -29,9 +30,13 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def start_qemu(log_path):
     log = open(log_path, "w")
     print(f"[lab] starting firmware in QEMU (log: {os.path.relpath(log_path, REPO)})", flush=True)
-    return subprocess.Popen([os.path.join(REPO, "scripts", "run_qemu.sh"), "--fresh"],
-                            stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
-                            start_new_session=True)
+    return subprocess.Popen(
+        [os.path.join(REPO, "scripts", "run_qemu.sh"), "--fresh"],
+        stdin=subprocess.DEVNULL,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
 
 
 def stop_qemu(proc):
@@ -81,6 +86,7 @@ async def main():
     try:
         if a.web:
             from lab.web.server import WebUI
+
             web_ui = WebUI(csms, ctrl, port=a.web_port)
             await web_ui.start()
             print(f"[lab] web UI: http://127.0.0.1:{a.web_port}  (Ctrl-C to stop)", flush=True)

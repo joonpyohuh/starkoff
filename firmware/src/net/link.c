@@ -24,8 +24,7 @@ static K_WORK_DELAYABLE_DEFINE(announce_work, announce);
 static void announce(struct k_work *w)
 {
 	struct sockaddr_in gw = {
-		.sin_family = AF_INET,
-		.sin_port = htons(9), /* discard */
+		.sin_family = AF_INET, .sin_port = htons(9), /* discard */
 	};
 	int fd = zsock_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 

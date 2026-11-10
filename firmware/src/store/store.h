@@ -8,7 +8,7 @@
 
 enum store_rec {
 	STORE_REC_CONFIG = 0,
-	STORE_REC_TX = 1,    /* ongoing transaction record */
+	STORE_REC_TX = 1, /* ongoing transaction record */
 	STORE_REC_LOCAL = 3,
 	STORE_REC_CACHE = 4,
 	STORE_REC_RESERVATION = 5,

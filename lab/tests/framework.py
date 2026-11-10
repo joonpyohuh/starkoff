@@ -8,6 +8,7 @@ It gets a Ctx with helpers that follow the wording of the OCTT document:
   await ctx.hw("plug 1")
 A failure raises TestFail with "Step N: expected ..., got ...".
 """
+
 import asyncio
 import time
 
@@ -28,6 +29,7 @@ def testcase(tc_id, name):
     def deco(fn):
         TESTS[tc_id] = (name, fn)
         return fn
+
     return deco
 
 
@@ -48,7 +50,7 @@ class Ctx:
         self.csms = csms
         self.ctrl = ctrl
         self.cfg = dict(CONFIG, **(cfg or {}))
-        self.mark = len(csms.events)   # events before this index are "already seen"
+        self.mark = len(csms.events)  # events before this index are "already seen"
         self.notes = []
 
     # ---------------- helpers ----------------
@@ -73,13 +75,20 @@ class Ctx:
         start = self.mark
 
         def pred(e):
-            return (e.direction == "cp->cs" and e.type == 2 and e.action == action
-                    and (where is None or where(e.payload or {})))
+            return (
+                e.direction == "cp->cs"
+                and e.type == 2
+                and e.action == action
+                and (where is None or where(e.payload or {}))
+            )
 
         ev, idx = await self.csms.wait_event(pred, start, timeout)
         if ev is None:
-            self.fail(step, f"expected {action}.req within {timeout} s, "
-                            f"but the charge point sent: {self._seen_since(start)}")
+            self.fail(
+                step,
+                f"expected {action}.req within {timeout} s, "
+                f"but the charge point sent: {self._seen_since(start)}",
+            )
         self.mark = idx + 1
         if check:
             err = check(ev.payload or {})
@@ -91,11 +100,10 @@ class Ctx:
         """The charge point must NOT send any of `actions` for `duration` seconds."""
         start = self.mark
         ev, idx = await self.csms.wait_event(
-            lambda e: e.direction == "cp->cs" and e.type == 2 and e.action in actions,
-            start, duration)
+            lambda e: e.direction == "cp->cs" and e.type == 2 and e.action in actions, start, duration
+        )
         if ev is not None:
-            self.fail(step, f"expected no {'/'.join(actions)} for {duration} s, "
-                            f"but got {ev.raw}")
+            self.fail(step, f"expected no {'/'.join(actions)} for {duration} s, " f"but got {ev.raw}")
 
     def response_to(self, ev):
         """The CSMS's CALLRESULT payload for a CALL event from the charge point."""
@@ -150,9 +158,13 @@ class Ctx:
                 last = await self.ctrl.status()
             except ConnectionError:
                 last = {}
-            if (last.get("boot") == "Accepted" and last.get("ws") == "up"
-                    and last.get("queue") == "0" and self.csms.conns
-                    and all(v == "Available" for k, v in last.items() if k.endswith(".status"))):
+            if (
+                last.get("boot") == "Accepted"
+                and last.get("ws") == "up"
+                and last.get("queue") == "0"
+                and self.csms.conns
+                and all(v == "Available" for k, v in last.items() if k.endswith(".status"))
+            ):
                 await asyncio.sleep(0.5)
                 self.mark = len(self.csms.events)
                 return
@@ -188,13 +200,23 @@ class Ctx:
                 await self.conn().call("CancelReservation", {"reservationId": ident}, 5)
             await self.conn().call("SendLocalList", {"listVersion": 1, "updateType": "Full"}, 5)
             await self.conn().call("ClearCache", {}, 5)
-        for key, value in {"LocalPreAuthorize": "false", "LocalAuthorizeOffline": "true",
-                           "AuthorizationCacheEnabled": "true", "LocalAuthListEnabled": "true",
-                           "ClockAlignedDataInterval": "0", "MeterValueSampleInterval": "60",
-                           "MinimumStatusDuration": "0", "ConnectionTimeOut": "30",
-                           "TransactionMessageAttempts": "3", "TransactionMessageRetryInterval": "60",
-                           "StopTransactionOnEVSideDisconnect": "true", "UnlockConnectorOnEVSideDisconnect": "true",
-                           "AllowOfflineTxForUnknownId": "false", "BackupPower": "false", "_StoreFail": "false"}.items():
+        for key, value in {
+            "LocalPreAuthorize": "false",
+            "LocalAuthorizeOffline": "true",
+            "AuthorizationCacheEnabled": "true",
+            "LocalAuthListEnabled": "true",
+            "ClockAlignedDataInterval": "0",
+            "MeterValueSampleInterval": "60",
+            "MinimumStatusDuration": "0",
+            "ConnectionTimeOut": "30",
+            "TransactionMessageAttempts": "3",
+            "TransactionMessageRetryInterval": "60",
+            "StopTransactionOnEVSideDisconnect": "true",
+            "UnlockConnectorOnEVSideDisconnect": "true",
+            "AllowOfflineTxForUnknownId": "false",
+            "BackupPower": "false",
+            "_StoreFail": "false",
+        }.items():
             await self.ctrl.cmd(f"cfg set {key} {value}")
         for c in range(1, 2):
             await self.ctrl.cmd(f"fault {c} off")
@@ -202,18 +224,18 @@ class Ctx:
             st = await self.ctrl.status()
             if st.get(f"c{c}.tx", "-1") != "-1" and self.csms.conns:
                 try:
-                    await self.conn().call("RemoteStopTransaction",
-                                           {"transactionId": int(st[f"c{c}.tx"])}, 10)
+                    await self.conn().call(
+                        "RemoteStopTransaction", {"transactionId": int(st[f"c{c}.tx"])}, 10
+                    )
                 except Exception:
                     pass
                 await asyncio.sleep(1)
             st = await self.ctrl.status()
             if st.get(f"c{c}.tag", "-") != "-" and st.get(f"c{c}.tx", "-1") == "-1":
-                await self.ctrl.cmd(f"card {c} {st[f'c{c}.tag']}")   # same card cancels
+                await self.ctrl.cmd(f"card {c} {st[f'c{c}.tag']}")  # same card cancels
             if st.get(f"c{c}.status") == "Unavailable" and self.csms.conns:
                 try:
-                    await self.conn().call("ChangeAvailability",
-                                           {"connectorId": 0, "type": "Operative"}, 10)
+                    await self.conn().call("ChangeAvailability", {"connectorId": 0, "type": "Operative"}, 10)
                 except Exception:
                     pass
             if st.get(f"c{c}.cable") == "1":

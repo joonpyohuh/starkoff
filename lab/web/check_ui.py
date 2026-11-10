@@ -2,6 +2,7 @@
 Start `scripts/run_lab.sh --qemu --web --quiet` first, then run this file with that Python.
 The check changes the simulated charger state and runs TC_055_CS.
 """
+
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 
@@ -46,7 +47,9 @@ def main():
         page.screenshot(path=str(out / "web-mobile.png"), full_page=True)
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), "horizontal overflow"
         assert not errors, errors
-        print("PASS: keyboard card -> charging -> remote stop; reservation/cancel; trigger; SQLite timing; command rejection; test result/reload; mobile width; no JS errors")
+        print(
+            "PASS: keyboard card -> charging -> remote stop; reservation/cancel; trigger; SQLite timing; command rejection; test result/reload; mobile width; no JS errors"
+        )
         browser.close()
 
 

@@ -33,7 +33,11 @@ void conn_on_hw(const struct sim_evt *e);
 bool conn_remote_start(int c, const char *id_tag);
 bool conn_remote_stop(int transaction_id);
 
-enum avail_result { AVAIL_ACCEPTED, AVAIL_REJECTED, AVAIL_SCHEDULED };
+enum avail_result {
+	AVAIL_ACCEPTED,
+	AVAIL_REJECTED,
+	AVAIL_SCHEDULED
+};
 /* ChangeAvailability. c = 0 means the whole charge point. */
 enum avail_result conn_change_availability(int c, bool operative);
 /* UnlockConnector: "Unlocked", "UnlockFailed" or "NotSupported". */

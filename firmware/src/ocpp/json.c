@@ -29,8 +29,8 @@ int jp_skip(const struct jp *p, int i)
 	}
 	if (p->tok[i].type == JSMN_OBJECT) {
 		for (int k = 0; k < p->tok[i].size; k++) {
-			end = jp_skip(p, end);     /* key */
-			end = jp_skip(p, end);     /* value */
+			end = jp_skip(p, end); /* key */
+			end = jp_skip(p, end); /* value */
 		}
 	} else if (p->tok[i].type == JSMN_ARRAY) {
 		for (int k = 0; k < p->tok[i].size; k++) {
@@ -49,8 +49,7 @@ bool jp_eq(const struct jp *p, int i, const char *s)
 {
 	size_t n = strlen(s);
 
-	return jp_is_type(p, i, JSMN_STRING) &&
-	       (size_t)(p->tok[i].end - p->tok[i].start) == n &&
+	return jp_is_type(p, i, JSMN_STRING) && (size_t)(p->tok[i].end - p->tok[i].start) == n &&
 	       strncmp(p->js + p->tok[i].start, s, n) == 0;
 }
 
@@ -84,13 +83,27 @@ bool jp_str(const struct jp *p, int i, char *out, size_t len)
 		if (c == '\\' && k + 1 < p->tok[i].end) {
 			c = p->js[++k];
 			switch (c) {
-			case 'n': c = '\n'; break;
-			case 't': c = '\t'; break;
-			case 'r': c = '\r'; break;
-			case 'b': c = '\b'; break;
-			case 'f': c = '\f'; break;
-			case 'u': c = '?'; k += 4; break; /* non-ASCII not needed by OCPP 1.6 fields */
-			default: break;                   /* \" \\ \/ */
+			case 'n':
+				c = '\n';
+				break;
+			case 't':
+				c = '\t';
+				break;
+			case 'r':
+				c = '\r';
+				break;
+			case 'b':
+				c = '\b';
+				break;
+			case 'f':
+				c = '\f';
+				break;
+			case 'u':
+				c = '?';
+				k += 4;
+				break; /* non-ASCII not needed by OCPP 1.6 fields */
+			default:
+				break; /* \" \\ \/ */
 			}
 		}
 		if (o + 1 >= len) {

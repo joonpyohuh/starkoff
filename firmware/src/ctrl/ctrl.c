@@ -28,9 +28,9 @@
 
 LOG_MODULE_REGISTER(ctrl, LOG_LEVEL_INF);
 
-#define MAX_ARGS     6
-#define LINE_MAX     300
-#define MAX_CLIENTS  4
+#define MAX_ARGS    6
+#define LINE_MAX    300
+#define MAX_CLIENTS 4
 
 static ctrl_status_hook_t status_hook;
 
@@ -39,6 +39,7 @@ static void do_reboot(struct k_work *w)
 	ARG_UNUSED(w);
 	sys_reboot(SYS_REBOOT_COLD);
 }
+
 static K_WORK_DELAYABLE_DEFINE(reboot_work, do_reboot);
 
 void ctrl_set_status_hook(ctrl_status_hook_t hook)
@@ -67,10 +68,14 @@ static int on_off(const char *s, bool *out)
 static const char *cfg_result_str(enum cfg_set_result r)
 {
 	switch (r) {
-	case CFG_ACCEPTED: return "Accepted";
-	case CFG_REJECTED: return "Rejected";
-	case CFG_REBOOT_REQUIRED: return "RebootRequired";
-	default: return "NotSupported";
+	case CFG_ACCEPTED:
+		return "Accepted";
+	case CFG_REJECTED:
+		return "Rejected";
+	case CFG_REBOOT_REQUIRED:
+		return "RebootRequired";
+	default:
+		return "NotSupported";
 	}
 }
 
@@ -97,7 +102,8 @@ static void cmd_cfg(int argc, char **argv, char *out, size_t len)
 		cfg_factory_reset();
 		snprintf(out, len, "OK defaults restored (reboot to apply url/id)");
 	} else {
-		snprintf(out, len, "ERR usage: cfg get <k> | cfg set <k> <v> | cfg list | cfg reset");
+		snprintf(out, len,
+			 "ERR usage: cfg get <k> | cfg set <k> <v> | cfg list | cfg reset");
 	}
 }
 
@@ -258,7 +264,8 @@ static void ctrl_thread(void *a, void *b, void *c)
 		return;
 	}
 	zsock_setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-	if (zsock_bind(lfd, (struct sockaddr *)&addr, sizeof(addr)) < 0 || zsock_listen(lfd, 2) < 0) {
+	if (zsock_bind(lfd, (struct sockaddr *)&addr, sizeof(addr)) < 0 ||
+	    zsock_listen(lfd, 2) < 0) {
 		LOG_ERR("control port %d bind/listen failed: %d", CONFIG_CTRL_TCP_PORT, errno);
 		return;
 	}
@@ -299,8 +306,7 @@ static void ctrl_thread(void *a, void *b, void *c)
 			}
 		}
 		for (int i = 0; i < MAX_CLIENTS; i++) {
-			if (clients[i].fd >= 0 && fds[i + 1].revents &&
-			    !client_rx(&clients[i])) {
+			if (clients[i].fd >= 0 && fds[i + 1].revents && !client_rx(&clients[i])) {
 				close_client(&clients[i]);
 			}
 		}
@@ -312,8 +318,8 @@ static struct k_thread ctrl_tid;
 
 void ctrl_start(void)
 {
-	k_thread_create(&ctrl_tid, ctrl_stack, K_THREAD_STACK_SIZEOF(ctrl_stack), ctrl_thread,
-			NULL, NULL, NULL, K_PRIO_PREEMPT(8), 0, K_NO_WAIT);
+	k_thread_create(&ctrl_tid, ctrl_stack, K_THREAD_STACK_SIZEOF(ctrl_stack), ctrl_thread, NULL,
+			NULL, NULL, K_PRIO_PREEMPT(8), 0, K_NO_WAIT);
 	k_thread_name_set(&ctrl_tid, "ctrl");
 }
 
@@ -328,14 +334,16 @@ static int cmd_cp(const struct shell *sh, size_t argc, char **argv)
 
 	shell_line[0] = '\0';
 	for (size_t i = 1; i < argc && n < sizeof(shell_line) - 2; i++) {
-		n += snprintf(shell_line + n, sizeof(shell_line) - n, "%s%s", i > 1 ? " " : "", argv[i]);
+		n += snprintf(shell_line + n, sizeof(shell_line) - n, "%s%s", i > 1 ? " " : "",
+			      argv[i]);
 	}
 	ctrl_exec(shell_line, shell_reply, sizeof(shell_reply));
 	shell_print(sh, "%s", shell_reply);
 	return 0;
 }
 
-SHELL_CMD_ARG_REGISTER(cp, NULL,
+SHELL_CMD_ARG_REGISTER(
+	cp, NULL,
 	"Charge point control: status | plug <c> | unplug <c> | ev_disconnect <c> | "
 	"card <c> <idTag> | power on|off | lock_fail <c> on|off | noise <c> on|off | hang | "
 	"fault <c> overcurrent|overtemp|overvoltage|off | net_down | net_up | "
