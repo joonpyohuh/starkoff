@@ -71,7 +71,7 @@
 | TC_049_CS | Reservation transaction - connector 0, remote=True, parent=False | PASS |  (6 s) |
 | TC_053_1_CS | Reservation transaction - connector 1, remote=False, parent=True | PASS |  (7 s) |
 | TC_053_2_CS | Reservation transaction - connector 1, remote=True, parent=True | PASS |  (10 s) |
-| TC_047_CS | Reservation expiry releases connector | PASS → **재검증 FAIL** | 위 재검증 참고 (8 s) |
+| TC_047_CS | Reservation expiry releases connector | PASS → 재검증 FAIL → **A3에서 수정 후 PASS** | 시계 오차 2~3초가 원인 (위 A3 참고) |
 | TC_048_1_CS | Reserve connector 1 - Faulted | PASS |  (2 s) |
 | TC_048_2_CS | Reserve connector 1 - Occupied | PASS |  (2 s) |
 | TC_048_3_CS | Reserve connector 1 - Unavailable | PASS |  (2 s) |
@@ -147,6 +147,29 @@ Playwright가 설치된 별도 Python 환경에서 `python lab/web/check_ui.py`�
   새로 설치하는 부분과, 완전히 새 Ubuntu 22.04(새 WSL·새 PC)에서의 확인은 **아직 하지 않았습니다.**
 - 공식 OCTT·스타코프 시험 서버에서는 아직 실행하지 않았습니다.
 - 캐시 LRU 모든 경계, 모든 설정 조합 및 모든 메시지 스키마 오류 입력을 망라한 시험은 아닙니다.
+
+## 심사위원 기준 전체 실행 (2026-11-10 23시, 커밋 `e36f632`)
+
+- 방법: `scripts/check_clean_install.sh --all <빈 디렉터리>`. 빈 HOME · 빈 환경에서 README 1.2~1.4절대로
+  GitHub에서 clone → Zephyr v4.2.0 · SDK 0.17.2 새로 설치 → 빌드 → 실험실 설치 후 83개 전부 실행.
+- 설치: 성공(654초, 시험 포함). 시험: **80/83 PASS, 3 FAIL, 펌웨어 크래시 0건.**
+- 실패 3건은 모두 **시험 코드 문제**로 확인하고 고쳤습니다(고친 뒤 해당 시험 재실행 PASS):
+  - X_TXDATA: 케이블을 뽑자마자 다음 RemoteStart를 보냄. 디바운싱(~120 ms) 동안 커넥터가 아직 Finishing이라
+    펌웨어가 규칙대로 Rejected. → Available을 기다린 뒤 보냄.
+  - TC_037_2, TC_037_3: 재연결 직후 오는 커넥터 0의 Available을 커넥터 1의 상태로 잘못 읽음. → 커넥터 1만 봄.
+- 이 실행에서 TC_047은 통과했지만 이전 실행에서는 실패 → 아래 A3에서 원인을 찾아 고침.
+
+## A3 · TC_047 원인과 수정 (2026-11-11)
+
+- 원인: **충전기 시계가 실제보다 2~3초 늦었습니다.** 서버 시각의 소수점 아래와 흐른 시간을 각각 초 단위로
+  내림해서 생긴 오차입니다. 그래서 3초 뒤 만료될 예약이 5~6초 뒤에 풀렸고, 시험의 8초 대기 안에 들어갈지가
+  상황에 따라 달랐습니다. 이 시계는 모든 timestamp, 예약 만료, 로컬 목록 만료에 쓰이므로 펌웨어 버그입니다.
+- 수정: 시계를 밀리초 단위로 유지(`firmware/src/ocpp/clock.c`). 수정 뒤 예약 만료 3.0초, 충전기와 호스트의 시각
+  차이는 1초 안(충전기는 초 단위까지만 표시).
+- 같이 찾은 시험 문제: X_METER_RECONFIG가 충전기 시계를 가짜 시각(23:59:58)으로 둔 채 끝나서, 바로 뒤에 도는
+  TC_036이 실패했습니다(시험 순서에 따라 결과가 달라짐). → 모든 시험 시작 전에 TriggerMessage(Heartbeat)로
+  충전기 시계를 진짜 시각으로 다시 맞춥니다. 그 순서로 다시 돌려 TC_036 · TC_047 PASS.
+- **수정 후 심사위원 기준 전체 실행은 아직 하지 않았습니다** (푸시 후 실행 예정).
 
 ## A1 · 새 기능 검증 (2026-11-11)
 

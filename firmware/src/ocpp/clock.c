@@ -3,9 +3,9 @@
  *
  * The charger has no battery-backed RTC. The Central System tells us the time in
  * BootNotification.conf / Heartbeat.conf (currentTime). We remember
- *     base_epoch  = that time (seconds since 1970, UTC)
+ *     base_epoch_ms = that time (milliseconds since 1970, UTC)
  *     base_uptime = our uptime (ms) when we received it
- * and compute   now = base_epoch + (uptime_now - base_uptime).
+ * and compute   now = (base_epoch_ms + (uptime_now - base_uptime)) / 1000.
  * Before the first sync the clock is "not valid"; callers then still get a
  * timestamp (1970 + uptime) but can check clock_valid().
  */
@@ -16,8 +16,10 @@
 #include <string.h>
 #include <zephyr/kernel.h>
 
-static int64_t base_epoch;  /* seconds */
-static int64_t base_uptime; /* ms */
+/* Milliseconds, not seconds: rounding both the server time and the elapsed time down
+ * to whole seconds made our clock up to ~2 s late (reservations expired late, TC_047). */
+static int64_t base_epoch_ms; /* server time at sync, ms since 1970 */
+static int64_t base_uptime;   /* our uptime at sync, ms */
 static bool valid;
 
 /* Days since 1970-01-01 for a civil date (Howard Hinnant's algorithm). */
@@ -46,8 +48,10 @@ static void civil_from_days(int64_t z, int *y, unsigned *m, unsigned *d)
 	*y = (int)(yoe + era * 400) + (*m <= 2);
 }
 
-bool clock_parse_iso(const char *s, int64_t *epoch_out)
+static bool parse_iso_ms(const char *s, int64_t *ms_out)
 {
+	int frac_ms = 0;
+
 	int y, mo, d, h, mi, sec;
 	int n = 0;
 	int64_t t;
@@ -66,11 +70,20 @@ bool clock_parse_iso(const char *s, int64_t *epoch_out)
 	t = days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + sec;
 	s += n;
 	if (*s == '.') {
+		int digits = 0;
+
 		s++;
 		if (!isdigit((unsigned char)*s))
 			return false;
-		while (isdigit((unsigned char)*s))
+		while (isdigit((unsigned char)*s)) {
+			if (digits < 3) { /* keep milliseconds, ignore finer digits */
+				frac_ms = frac_ms * 10 + (*s - '0');
+				digits++;
+			}
 			s++;
+		}
+		while (digits++ < 3)
+			frac_ms *= 10;
 	}
 	if (*s == 'Z' && !s[1]) {
 	} else if ((*s == '+' || *s == '-') && strlen(s) == 6 && s[3] == ':' &&
@@ -82,7 +95,17 @@ bool clock_parse_iso(const char *s, int64_t *epoch_out)
 		t += (*s == '+' ? -1 : 1) * (oh * 3600 + om * 60);
 	} else
 		return false;
-	*epoch_out = t;
+	*ms_out = t * 1000 + frac_ms;
+	return true;
+}
+
+bool clock_parse_iso(const char *s, int64_t *epoch_out)
+{
+	int64_t ms;
+
+	if (!parse_iso_ms(s, &ms))
+		return false;
+	*epoch_out = ms / 1000; /* dates are after 1970 (checked), so this rounds down */
 	return true;
 }
 
@@ -104,12 +127,12 @@ void clock_format_iso(int64_t epoch, char *out, size_t len)
 
 bool clock_sync_iso(const char *iso)
 {
-	int64_t t;
+	int64_t ms;
 
-	if (!iso || !clock_parse_iso(iso, &t)) {
+	if (!iso || !parse_iso_ms(iso, &ms)) {
 		return false;
 	}
-	base_epoch = t;
+	base_epoch_ms = ms;
 	base_uptime = k_uptime_get();
 	valid = true;
 	return true;
@@ -117,6 +140,6 @@ bool clock_sync_iso(const char *iso)
 
 bool clock_valid(void) { return valid; }
 
-int64_t clock_now(void) { return base_epoch + (k_uptime_get() - base_uptime) / 1000; }
+int64_t clock_now(void) { return (base_epoch_ms + (k_uptime_get() - base_uptime)) / 1000; }
 
 void clock_now_iso(char *out, size_t len) { clock_format_iso(clock_now(), out, len); }

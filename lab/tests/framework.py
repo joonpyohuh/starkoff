@@ -159,6 +159,19 @@ class Ctx:
             await asyncio.sleep(0.5)
         raise TestFail(f"precondition: charge point not ready (status: {last})")
 
+    async def resync_clock(self):
+        """Some tests set a fake server time (e.g. X_METER_RECONFIG: 23:59:58). Ask the CP for a
+        Heartbeat so the CSMS answers with the real time: every test starts with a correct clock."""
+        try:
+            res = await self.conn().call("TriggerMessage", {"requestedMessage": "Heartbeat"}, 10)
+        except Exception as e:
+            raise TestFail(f"precondition: clock resync failed ({e})")
+        if res.get("status") != "Accepted":
+            raise TestFail(f"precondition: TriggerMessage(Heartbeat) {res}")
+        await self.expect("Heartbeat", "precondition", timeout=10)
+        await asyncio.sleep(0.3)
+        self.mark = len(self.csms.events)
+
     async def reset_cp_state(self):
         """Bring the charge point back to the general preconditions (OCTT 1.3):
         no faults, no transaction, no authorization, connectors operative, cable out."""
@@ -216,6 +229,7 @@ async def run_one(tc_id, csms, ctrl, cfg=None):
     try:
         await ctx.reset_cp_state()
         await ctx.wait_ready()
+        await ctx.resync_clock()
         await fn(ctx)
         return "PASS", "; ".join(ctx.notes), time.monotonic() - t0
     except TestFail as e:

@@ -156,7 +156,7 @@ def _mv_ts(mv):
 
 @testcase("X_TXDATA", "StopTransaction.transactionData: Begin, samples, End; never larger than one message")
 async def x_txdata(ctx):
-    from lab.tests.core import state_charging
+    from lab.tests.core import state_charging, status_is
     old = await _settings(ctx, {"StopTxnSampledData": "Energy.Active.Import.Register",
                                 "MeterValueSampleInterval": "2"})
     try:
@@ -179,6 +179,10 @@ async def x_txdata(ctx):
 
         # case 2: all four measurands, long transaction -> must stay a valid message <= 1 KB payload
         await ctx.hw("unplug 1")
+        # the unplug is debounced (~120 ms); until then the connector is still Finishing and a
+        # RemoteStart is (correctly) Rejected, so wait for Available first
+        await ctx.expect("StatusNotification", "C2.0",
+                         where=lambda p: p.get("connectorId") == 1 and p.get("status") == "Available")
         await _settings(ctx, {"StopTxnSampledData":
                               "Energy.Active.Import.Register,Power.Active.Import,Current.Import,Voltage",
                               "MeterValueSampleInterval": "1"})

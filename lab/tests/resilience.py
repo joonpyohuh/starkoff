@@ -245,7 +245,8 @@ async def tc_037_2(ctx):
         await _offline_start(ctx, bad)
         start = await ctx.expect("StartTransaction", 1, timeout=30, check=field_is("idTag", bad))
         ctx.require(ctx.response_to(start)["idTagInfo"]["status"] == "Invalid", 2, "CSMS did not answer Invalid")
-        await ctx.expect("StatusNotification", 3, timeout=15, check=status_is("Charging", 1))
+        await ctx.expect("StatusNotification", 3, timeout=15, where=lambda p: p.get("connectorId") == 1,
+                         check=status_is("Charging", 1))
         await ctx.expect("StatusNotification", 5, timeout=15, check=status_is("SuspendedEVSE", 1))
         stops = [e for e in ctx.csms.events[ctx.mark:] if e.action == "StopTransaction"]
         ctx.require(not stops, 5, "sent StopTransaction although StopTransactionOnInvalidId is false")
@@ -259,7 +260,8 @@ async def tc_037_3(ctx):
         await _offline_start(ctx, bad)
         start = await ctx.expect("StartTransaction", 1, timeout=30, check=field_is("idTag", bad))
         ctx.require(ctx.response_to(start)["idTagInfo"]["status"] == "Invalid", 2, "CSMS did not answer Invalid")
-        await ctx.expect("StatusNotification", 3, timeout=15, check=status_is("Charging", 1))
+        await ctx.expect("StatusNotification", 3, timeout=15, where=lambda p: p.get("connectorId") == 1,
+                         check=status_is("Charging", 1))
         await ctx.expect("StopTransaction", 5, timeout=15, check=field_is("reason", "DeAuthorized"))
         await ctx.expect("StatusNotification", 7, timeout=15, check=status_is("Finishing", 1))
 
