@@ -61,4 +61,7 @@ Keep it this small. Add a command only when a test needs it.
 
 ## Work style
 - Before a big step, show a short plan (5 lines max) and wait for approval.
+- README.md section 1 is the clean-Ubuntu reproduction procedure. Whenever a step adds a dependency,
+  script, flag or path, update it in the same commit. Never rely on paths that exist only on the dev PC
+  (e.g. a hard-coded ZEPHYR_BASE).
 - Commit in small units with clear messages. Append a line to `docs/AI_USAGE.md` per meaningful AI-written part.
