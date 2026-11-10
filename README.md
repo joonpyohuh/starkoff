@@ -125,6 +125,9 @@ Detailed OCTT test results will be in `docs/TEST_RESULTS.md`.
 - **Zephyr v4.2.0's e1000 driver does not accept broadcast frames**, so DHCP cannot work in QEMU. The
   firmware uses the static address 10.0.2.15 and sends a small packet to the gateway at boot and every
   30 s so QEMU's NAT can reach the control port (D7).
+- QEMU prints `Slirp: Failed to send packet, ret: -1` now and then. That is QEMU reporting a frame
+  the e1000 driver did not accept (broadcasts, see above, or a frame arriving while its single receive
+  buffer is busy). TCP retransmits; it is not a firmware crash.
 - The hardware simulator keeps running while "power is off" (it is the outside world); only the
   charger logic stops (D12).
 
