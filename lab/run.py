@@ -15,6 +15,7 @@ import argparse
 import asyncio
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -37,6 +38,35 @@ def start_qemu(log_path):
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
+
+
+def port_in_use(port):
+    """True if something on this PC already listens on 127.0.0.1:<port>."""
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def check_ports(a):
+    """Stop early with a clear message instead of silently testing an old firmware.
+    (A second QEMU cannot bind the control port and exits, but the tests would then
+    talk to the QEMU that was already running.)"""
+    if a.qemu and port_in_use(a.ctrl_port):
+        print(
+            f"[lab] 포트 {a.ctrl_port}을 이미 쓰고 있습니다: 이미 실행 중인 QEMU가 있습니다.\n"
+            "      그 창에서 Ctrl-a 다음 x로 끄고 다시 실행하세요.",
+            file=sys.stderr,
+        )
+        return False
+    busy = [p for p in (a.port, a.web_port if a.web else None) if p and port_in_use(p)]
+    if busy:
+        print(
+            f"[lab] 포트 {', '.join(map(str, busy))}을 이미 쓰고 있습니다: 다른 run_lab.sh가 실행 중입니다.\n"
+            "      그 창에서 Ctrl-C로 끄고 다시 실행하세요.",
+            file=sys.stderr,
+        )
+        return False
+    return True
 
 
 def stop_qemu(proc):
@@ -75,6 +105,8 @@ async def main():
         for tc, (name, _) in TESTS.items():
             print(f"{tc:<12} {name}")
         return 0
+    if not check_ports(a):
+        return 3
 
     csms = CSMS(port=a.port, verbose=not a.quiet)
     await csms.start()
